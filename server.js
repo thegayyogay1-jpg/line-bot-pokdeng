@@ -92,40 +92,66 @@ app.post('/callback', async (req, res) => {
                                `• พิมพ์ [ผล: ไพ่ขา1...,ไพ่เจ้ามือ] : คิดเงินรอบ`;
                 }
 
-                // ==========================================
-                // PART 1: ระบบเติมเงิน / ถอนเงิน (คุมด้วยแท็ก 100%)
-                // ==========================================
-                else if (originalMsg.startsWith('เติม')) {
-                    if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์เติมเงินครับ!`;
-                    } else {
-                        let targetUserId = null;
-                        let amount = 0;
+               // ==========================================
+// PART 1: ระบบเติมเงิน (เวอร์ชันยืดหยุ่น พิมพ์เลขสมาชิก หรือ แท็ก ก็ได้)
+// ==========================================
+else if (originalMsg.startsWith('เติม')) {
+    if (!isAdmin) {
+        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์เติมเงินครับ!`;
+    } else {
+        let targetUserId = null;
+        let amount = 0;
+        
+        // ดึงตัวเลขจำนวนเงิน (ตัวเลขชุดสุดท้ายของข้อความ)
+        const moneyMatch = originalMsg.match(/\d+$/);
+        if (moneyMatch) {
+            amount = parseInt(moneyMatch[0]);
+        }
 
-                        // ตรวจจับระบบแท็กแท้จาก LINE
-                        if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
-                            targetUserId = event.message.mention.mentions[0].userId;
-                            
-                            // ดึงจำนวนเงินจากคำสุดท้าย
-                            let tokens = originalMsg.split(/\s+/);
-                            amount = parseInt(tokens[tokens.length - 1]);
+        // หาข้อความส่วนตรงกลาง (ชื่อ หรือ รหัสสมาชิก ที่ต้องการเติม)
+        let cleanText = originalMsg.replace('เติม', '').trim();
+        if (moneyMatch) {
+            cleanText = cleanText.substring(0, cleanText.lastIndexOf(moneyMatch[0])).trim();
+        }
+        let searchKeyword = cleanText.replace('@', '').trim().toLowerCase().replace(/\s+/g, '');
 
-                            // ดึงชื่อจากการแท็กสดๆ มาบันทึกทับในระบบให้รู้ว่าเขาชื่ออะไร
-                            let parts = originalMsg.split(/\s+/);
-                            if (parts[1] && parts[1].startsWith('@')) {
-                                usersWallets[targetUserId].name = parts[1].replace('@', '').trim();
-                            }
-                        }
+        // 1. ตรวจสอบก่อนว่ามีการกดแท็กจริงไหม (ถ้ามีให้ใช้ค่าจากแท็กก่อน)
+        if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
+            targetUserId = event.message.mention.mentions[0].userId;
+            
+            // ดึงชื่อจากการแท็กสดๆ มาบันทึกทับในระบบ
+            let parts = originalMsg.split(/\s+/);
+            let rawName = parts.find(p => p.includes('@'));
+            if (rawName && targetUserId) {
+                usersWallets[targetUserId].name = rawName.replace('@', '').trim();
+            }
+        } 
+        // 2. ถ้าไม่ได้แท็ก หรือแท็กไม่ติด ให้ค้นหาจาก "รหัสสมาชิก" หรือ "ชื่อ" ที่พิมพ์มา
+        else if (searchKeyword) {
+            for (let uid in usersWallets) {
+                let u = usersWallets[uid];
+                let memberTitleClean = u.memberTitle.toLowerCase().replace(/\s+/g, ''); // "สมาชิกที่3"
+                let memberNumClean = u.memberNumber.toString(); // "3"
+                let nameClean = u.name.toLowerCase().replace(/\s+/g, '');
 
-                        if (!targetUserId || isNaN(amount) || amount <= 0) {
-                            replyMsg = `👑 [แอดมิน] ❌ เติมเงินไม่สำเร็จ\n📌 **วิธีที่ถูกต้อง:** พิมพ์คำว่า **เติม** แล้วกดเว้นวรรค จากนั้น**เลือกแท็กชื่อผู้เล่น**ในไลน์ให้ขึ้นสีฟ้า แล้วเว้นวรรคตามด้วย**จำนวนเงิน**\n💡 ตัวอย่าง: เติม @JaoGolf2 1000`;
-                        } else {
-                            usersWallets[targetUserId].balance += amount;
-                            let tUser = usersWallets[targetUserId];
-                            replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle} (@${tUser.name})\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท`;
-                        }
-                    }
+                if (memberTitleClean === searchKeyword || 
+                    memberNumClean === searchKeyword || 
+                    nameClean.includes(searchKeyword)) {
+                    targetUserId = uid;
+                    break;
                 }
+            }
+        }
+        if (!targetUserId || isNaN(amount) || amount <= 0) {
+            replyMsg = `👑 [แอดมิน] ❌ เติมเงินไม่สำเร็จ\n📌 **วิธีที่ง่ายที่สุด:** พิมพ์คำว่า **เติม [เลขสมาชิก] [เงิน]**\n💡 ตัวอย่าง: เติม 3 1000\n(หรือจะพิมพ์: เติม สมาชิกที่3 1000 ก็ได้เช่นกันครับ)`;
+        } else {
+            usersWallets[targetUserId].balance += amount;
+            let tUser = usersWallets[targetUserId];
+            let nameDisplay = tUser.name !== "ผู้เล่นทั่วไป" ? ` (@${tUser.name})` : "";
+            replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle}${nameDisplay}\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท`;
+        }
+    }
+}
                 else if (userMsg.startsWith('ถอน')) {
                     const qPos = getQueueIndex(userId);
                     if (qPos > 0) {
