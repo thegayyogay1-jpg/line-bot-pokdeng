@@ -135,17 +135,22 @@ app.post('/callback', async (req, res) => {
                 else if (userMsg.startsWith('ถอน')) {
                     const qPos = getQueueIndex(userId);
                     if (qPos > 0) {
-                        replyMsg = `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})` };
                     } else {
                         const amount = parseInt(userMsg.replace('ถอน', ''));
                         if (!isNaN(amount) && amount > 0) {
                             if (user.balance < amount) {
-                                replyMsg = `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)`;
+                                replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)` };
                             } else {
                                 withdrawQueue.push({ userId: userId, amount: amount });
-                                // ✨ ปรับข้อความให้แท็กและแสดงชื่อให้ชัดเจนขึ้น เพื่อให้แอดมินกดที่ชื่อเพื่อทักแชทส่วนตัวได้ง่าย
-                                let displayName = user.name !== "ผู้เล่นทั่วไป" ? `(@${user.name})` : "";
-                                replyMsg = `🔔 [คำขอถอนเงินใหม่]\n👤 ${user.memberTitle} ${displayName}\n💰 จำนวนเงิน: **${amount}** บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📢 แอดมินสามารถกดที่ชื่อหรือโปรไฟล์ของผู้เล่นในกลุ่มนี้ เพื่อทักแชทส่วนตัวไปดูเลขบัญชีได้เลยครับ`;
+                                
+                                let displayName = user.name !== "ผู้เล่นทั่วไป" ? ` (@${user.name})` : "";
+                                
+                                // ✨ ใช้ข้อความธรรมดาพร้อมลิงก์ที่ใช้งานได้ทันที (เปลี่ยน ID บอทให้แล้ว)
+                                replyMessageObject = {
+                                    type: 'text',
+                                    text: `🔔 [คำขอถอนเงินใหม่]\n👤 ${user.memberTitle}${displayName}\n💰 จำนวนเงิน: ${amount} บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📌 แอดมินกดลิงก์ด้านล่างเพื่อเข้าแชทส่วนตัวไปดูเลขบัญชีได้เลยครับ:\n👉 https://line.me/R/ti/p/@016vstvh`
+                                };
                             }
                         }
                     }
