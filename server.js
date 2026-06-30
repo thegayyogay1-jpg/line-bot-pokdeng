@@ -395,43 +395,54 @@ app.post('/callback', async (req, res) => {
                                 let bet = khaData.bet;
                                 let isDealerSide = (khaData.type === 'มจ' || khaData.type === 'จ');
 
-                                let singleHolding = bet * 2; // ทุนค้ำต่อขา 
-                                let winLoss = 0;
+                                // 📦 ให้ก๊อปปี้ท่อนนี้ไปวางแทนที่เงื่อนไขคิดแต้มไพ่เดิมได้เลยครับ
 
-                                // กรณีที่ 1: ผู้เล่นแต้มเหนือกว่าเจ้ามือ
-                                if (playerResult.score > dealerResult.score) {
-                                    let winAmount = bet * playerResult.deng;
-                                    if (isDealerSide) {
-                                        // เล่นฝั่งเจ้ามือแต่เจ้ามือแพ้ = เสียเงินเดิมพันตามเด้งผู้เล่น
-                                        winLoss = -winAmount;
-                                        userTotalReturn += (singleHolding - winAmount);
-                                    } else {
-                                        // เล่นฝั่งผู้เล่นแล้วชนะ = ได้เงินเดิมพันตามเด้งผู้เล่น
-                                        winLoss = winAmount;
-                                        userTotalReturn += (singleHolding + winAmount);
-                                    }
-                                } 
-                                // กรณีที่ 2: เจ้ามือแต้มเหนือกว่าผู้เล่น (เจ้ากิน)
-                                else if (playerResult.score < dealerResult.score) {
-                                    let loseAmount = bet * dealerResult.deng;
-                                    if (isDealerSide) {
-                                        // เล่นฝั่งเจ้ามือแล้วชนะ (เจ้ากินรอบวง) = ได้กำไรเต็มจำนวน หักค่าน้ำ 10% ของยอดชนะสุทธิขาฉลองนั้นๆ
-                                        let profitAfterWater = loseAmount * 0.90; 
-                                        winLoss = profitAfterWater;
-                                        userTotalReturn += (singleHolding + profitAfterWater);
-                                    } else {
-                                        // เล่นฝั่งผู้เล่นแต่แพ้เจ้ามือ = เสียเงินเดิมพันตามเด้งเจ้ามือ
-                                        winLoss = -loseAmount;
-                                        userTotalReturn += (singleHolding - loseAmount);
-                                    }
-                                } 
-                                // กรณีที่ 3: เสมอกัน
-                                else {
-                                    winLoss = 0; 
-                                    userTotalReturn += singleHolding; 
-                                }
+let singleHolding = bet * 2; // เงินค้ำประกันที่โดนหักไปตอนแรก (เช่น แทง 50 ค้ำ 100)
+let winLoss = 0;
 
-                                totalWinLoss += winLoss;
+if (!isDealerSide) {
+    // ==========================================
+    // [1] กรณีผู้เล่นแทงฝั่งผู้เล่นทั่วไป (เดี่ยว / มข)
+    // ==========================================
+    if (playerResult.score > dealerResult.score) {
+        // ผู้เล่นชนะเจ้ามือ
+        let winAmount = bet * playerResult.deng;
+        winLoss = winAmount;
+        userTotalReturn += (singleHolding + winAmount); 
+    } else if (playerResult.score < dealerResult.score) {
+        // ผู้เล่นแพ้เจ้ามือ
+        let loseAmount = bet * dealerResult.deng;
+        winLoss = -loseAmount;
+        userTotalReturn += (singleHolding - loseAmount); 
+    } else {
+        // เสมอ
+        winLoss = 0;
+        userTotalReturn += singleHolding;
+    }
+} else {
+    // ==========================================
+    // [2] กรณีผู้เล่นแทงฝั่งเจ้ามือ (จ / มจ) <-- จุดที่แก้ไข
+    // ==========================================
+    if (dealerResult.score > playerResult.score) {
+        // เจ้ามือชนะ (กินผู้เล่น) -> ได้กำไรสุทธิหลังหักน้ำ 10%
+        let grossProfit = bet * dealerResult.deng; // ยอดชนะดิบ (เช่น 50 x 2 = 100)
+        let netProfit = grossProfit * 0.90;        // หักน้ำ 10% (เหลือ 90)
+        winLoss = netProfit;
+        // คืนเงินค้ำประกันเต็มจำนวน + กำไรที่หักค่าน้ำแล้ว
+        userTotalReturn += (singleHolding + netProfit); 
+    } else if (dealerResult.score < playerResult.score) {
+        // เจ้ามือแพ้ (ผู้เล่นกิน) -> เสียตามเด้งของผู้เล่นขานั้นๆ
+        let loseAmount = bet * playerResult.deng;
+        winLoss = -loseAmount;
+        userTotalReturn += (singleHolding - loseAmount);
+    } else {
+        // เสมอ
+        winLoss = 0;
+        userTotalReturn += singleHolding;
+    }
+}
+
+totalWinLoss += winLoss;
                             }
 
                             pUser.balance += userTotalReturn;
