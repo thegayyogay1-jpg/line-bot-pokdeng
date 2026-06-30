@@ -9,11 +9,10 @@ let isRoundOpen = false;
 let roundBets = {}; 
 let withdrawQueue = []; 
 
-// 👑 [ตั้งค่าแอดมิน] สามารถใส่ LINE USER ID ของแอดมินกี่คนก็ได้ในอาร์เรย์นี้ครับ
+// 👑 [ตั้งค่าแอดมิน] ใส่ LINE USER ID ของแอดมินตรงนี้ครับ
 const ADMIN_LIST = [
-    "U0d1e353091d90af57b37ff38d36e29bc",
-    "U7ab0fc440b4867017066a5f9265ba4f9",
-    "ใส่IDแอดมิน"
+    "ใส่_LINE_USER_ID_แอดมินคนแรกตรงนี้",
+    "ใส่_LINE_USER_ID_แอดมินคนที่สองตรงนี้ (ถ้ามี)"
 ]; 
 
 function parseCard(cardStr) {
@@ -48,10 +47,10 @@ app.post('/callback', async (req, res) => {
             const userMsg = originalMsg.toLowerCase().replace(/\s+/g, '');
             let replyMsg = "";
 
-            // ตรวจสอบสิทธิ์แอดมินจากระบบ List
+            // ตรวจสอบสิทธิ์แอดมิน
             const isAdmin = ADMIN_LIST.includes(userId);
 
-            // 🆕 ระบบจดจำ ดึงชื่อไลน์ และมอบหมายเลขสมาชิกประจำตัว (สมาชิกที่ 1, 2, 3...) อัตโนมัติ
+            // ลงทะเบียนสมาชิกใหม่เข้าคิวอัตโนมัติ
             if (!usersWallets[userId]) {
                 let displayName = "ผู้เล่นทั่วไป";
                 try {
@@ -70,19 +69,16 @@ app.post('/callback', async (req, res) => {
                     name: displayName, 
                     balance: 0 
                 };
-                nextMemberId++; // เพิ่มลำดับคนถัดไป
+                nextMemberId++;
             }
             
             const user = usersWallets[userId];
-            // ข้อความแท็กเรียกชื่อที่จะแสดงในแชท: "สมาชิกที่ 1 (@ชื่อไลน์)"
-            const mentionText = `👤 ${user.memberTitle} (@${user.name}) `;
+            const mentionText = `👤 ${user.memberTitle} (${user.name}) `;
             
             const getQueueIndex = (uid) => withdrawQueue.findIndex(item => item.userId === uid) + 1;
             const hasPendingWithdraw = getQueueIndex(userId) > 0;
 
-            // ==========================================
-            // SYSTEM COMMAND: คู่มือคำสั่ง
-            // ==========================================
+            // คำสั่งช่วยเหลือ
             if (userMsg === 'คำสั่ง' || userMsg === 'help') {
                 replyMsg = `📖 [คู่มือคีย์ลัดระบบป๊อกเด้ง]\n` +
                            `------------------------\n` +
@@ -92,60 +88,86 @@ app.post('/callback', async (req, res) => {
                            `• พิมพ์ [R] : ยกเลิกโพยประจำรอบ\n` +
                            `• ส่งโพยแทง : [ขา]-[ราคา] (เช่น 123-50)\n\n` +
                            `👑 **สำหรับแอดมินเท่านั้น:**\n` +
-                           `• พิมพ์ [เติม ชื่อหรือแท็กหรือสมาชิกที่X จำนวนเงิน] : เติมเงินให้ผู้เล่น\n` +
-                           `• พิมพ์ [Y ชื่อหรือแท็กหรือสมาชิกที่X] : อนุมัติคิวถอนเงิน\n` +
+                           `• พิมพ์ [เติม สมาชิกที่X จำนวนเงิน] หรือกดแท็กชื่อ : เติมเงิน\n` +
+                           `• พิมพ์ [Y สมาชิกที่X] หรือกดแท็กชื่อ : อนุมัติคิวถอนเงิน\n` +
                            `• พิมพ์ [O] : เปิดรอบ / [X] : ปิดรอบสรุปโพย\n` +
                            `• พิมพ์ [ผล: ไพ่ขา1...,ไพ่เจ้ามือ] : คิดเงินรอบ`;
             }
 
             // ==========================================
-            // PART 1: ระบบเติมเงิน / ถอนเงิน / คอนเฟิร์ม Y (เวอร์ชันอัจฉริยะ)
+            // PART 1: ระบบเติมเงิน / ถอนเงิน / คอนเฟิร์ม Y (รองรับทั้งการพิมพ์รหัส และ การกดแท็กจาก LINE)
             // ==========================================
             else if (originalMsg.startsWith('เติม')) {
                 if (!isAdmin) {
                     replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งเติมเงินครับ!\n*(ID ของคุณคือ: ${userId})`;
                 } else {
-                    const tokens = originalMsg.split(/\s+/);
-                    if (tokens.length >= 3) {
-                        const searchKeyword = tokens[1].replace('@', '').trim().toLowerCase();
-                        const amount = parseInt(tokens[2]);
-                        let targetUserId = null;
+                    let targetUserId = null;
+                    let amount = 0;
 
-                        // วนลูปหาในฐานข้อมูล: รองรับทั้งค้นหาด้วยชื่อไลน์, ชื่อย่อย หรือชื่อ "สมาชิกที่ X"
-                        for (let uid in usersWallets) {
-                            let u = usersWallets[uid];
-                            if (u.name.toLowerCase().includes(searchKeyword) || 
-                                u.memberTitle.toLowerCase().replace(/\s+/g, '').includes(searchKeyword)) {
-                                targetUserId = uid;
-                                break;
+                    // ✨ ระบบอัจฉริยะ 1: ตรวจจับหากแอดมินใช้วิธี "กดแท็กเลือกชื่อผู้เล่น" จากระบบ LINE จริงๆ
+                    if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
+                        targetUserId = event.message.mention.mentions[0].userId;
+                        // ดึงจำนวนเงินจากท้ายข้อความ
+                        let tokens = originalMsg.split(/\s+/);
+                        amount = parseInt(tokens[tokens.length - 1]);
+                    } 
+                    // 📑 ระบบอัจฉริยะ 2: หากแอดมินพิมพ์ด้วยมือปกติ (เช่น เติม สมาชิกที่1 1000)
+                    else {
+                        let cleanText = originalMsg.substring(4).trim();
+                        let tokens = cleanText.split(/\s+/);
+                        let searchKeyword = "";
+
+                        if (originalMsg.includes('@') && !originalMsg.startsWith('เติม ')) {
+                            let parts = originalMsg.replace('เติม', '').split(/\s+/);
+                            if (parts.length >= 2) {
+                                searchKeyword = parts[0].replace('@', '').trim().toLowerCase();
+                                amount = parseInt(parts[parts.length - 1]);
+                            }
+                        } else if (tokens.length >= 2) {
+                            searchKeyword = tokens[0].replace('@', '').trim().toLowerCase();
+                            amount = parseInt(tokens[tokens.length - 1]);
+                        }
+
+                        if (searchKeyword) {
+                            for (let uid in usersWallets) {
+                                let u = usersWallets[uid];
+                                if (u.name.toLowerCase().includes(searchKeyword) || 
+                                    u.memberTitle.toLowerCase().replace(/\s+/g, '').includes(searchKeyword)) {
+                                    targetUserId = uid;
+                                    break;
+                                }
                             }
                         }
+                    }
 
-                        if (!targetUserId || isNaN(amount) || amount <= 0) {
-                            replyMsg = `👑 [แอดมิน] ❌ ไม่พบผู้เล่นที่ค้นหา หรือจำนวนเงินไม่ถูกต้อง\n📌 แนะนำพิมพ์: **เติม @ชื่อไลน์ ${amount}** หรือ **เติม สมาชิกที่1 ${amount}**`;
-                        } else {
-                            usersWallets[targetUserId].balance += amount;
-                            let tUser = usersWallets[targetUserId];
-                            replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle} (@${tUser.name})\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท`;
-                        }
+                    if (!targetUserId || isNaN(amount) || amount <= 0) {
+                        replyMsg = `👑 [แอดมิน] ❌ ไม่พบผู้เล่น หรือรูปแบบจำนวนเงินไม่ถูกต้อง\n📌 แนะนำวิธีง่ายสุด: พิมพ์ **เติม [กดแท็กชื่อเขา] [จำนวนเงิน]** หรือ **เติม สมาชิกที่1 ${amount || 1000}**`;
                     } else {
-                        replyMsg = `👑 [แอดมิน] ❌ รูปแบบคำสั่งไม่ครบถ้วน กรุณาพิมพ์: เติม [ชื่อผู้เล่น] [จำนวนเงิน]`;
+                        // อัปเดตชื่อในระบบให้ตรงกับที่แอดมินแท็กเพื่อความสวยงามในอนาคต
+                        if (event.message.mention && event.message.mention.mentions) {
+                            // หากแอดมินกดแท็ก ให้พยายามอัปเดตชื่อตามที่พิมพ์มา
+                            let parts = originalMsg.split(/\s+/);
+                            if(parts[1]) usersWallets[targetUserId].name = parts[1].replace('@', '');
+                        }
+                        
+                        usersWallets[targetUserId].balance += amount;
+                        let tUser = usersWallets[targetUserId];
+                        replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle} (@${tUser.name})\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท`;
                     }
                 }
             }
             else if (userMsg.startsWith('ถอน')) {
                 const qPos = getQueueIndex(userId);
                 if (qPos > 0) {
-                    replyMsg = `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ "อยู่ระหว่างดำเนินการ" (คุณอยู่ในคิวที่ ${qPos} ของระบบครับ)`;
+                    replyMsg = `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})`;
                 } else {
                     const amount = parseInt(userMsg.replace('ถอน', ''));
                     if (!isNaN(amount) && amount > 0) {
                         if (user.balance < amount) {
-                            replyMsg = `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินในกระเป๋าไม่พอ (มีอยู่ ${user.balance} บ.)`;
+                            replyMsg = `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)`;
                         } else {
                             withdrawQueue.push({ userId: userId, amount: amount });
-                            const currentQ = withdrawQueue.length;
-                            replyMsg = `${mentionText} 🔔 แจ้งถอนเงินจำนวน ${amount} บาท สำเร็จ!\n⏳ [สถานะ]: อยู่ระหว่างดำเนินการ... คุณจัดอยู่ใน **คิวที่ ${currentQ}** ของระบบ\n🔒 *(ระบบล็อกชั่วคราว: คุณจะไม่สามารถลงเดิมพันได้จนกว่าแอดมินจะอนุมัติคิวนี้)*`;
+                            replyMsg = `${mentionText} 🔔 แจ้งถอนเงินจำนวน ${amount} บาท สำเร็จ!\n⏳ อยู่ใน **คิวที่ ${withdrawQueue.length}** ของระบบ\n🔒 *(ระบบล็อกชั่วคราวชั่วคราว จนกว่าแอดมินจะอนุมัติ)*`;
                         }
                     }
                 }
@@ -154,22 +176,27 @@ app.post('/callback', async (req, res) => {
                 if (!isAdmin) {
                     replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถอนุมัติรายการถอนเงินได้ครับ`;
                 } else {
-                    const searchKeyword = originalMsg.substring(2).trim().replace('@', '').toLowerCase();
-                    let foundIndex = -1;
-                    
-                    // ค้นหาเป้าหมายจากคิวถอนเงิน
-                    for (let i = 0; i < withdrawQueue.length; i++) {
-                        let uid = withdrawQueue[i].userId;
-                        let u = usersWallets[uid];
-                        if (u.name.toLowerCase().includes(searchKeyword) || 
-                            u.memberTitle.toLowerCase().replace(/\s+/g, '').includes(searchKeyword)) {
-                            foundIndex = i;
-                            break;
+                    let targetUserId = null;
+
+                    // รองรับการกดแท็กเพื่ออนุมัติ Y
+                    if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
+                        targetUserId = event.message.mention.mentions[0].userId;
+                    } else {
+                        const searchKeyword = originalMsg.substring(2).trim().replace('@', '').toLowerCase();
+                        for (let uid in usersWallets) {
+                            let u = usersWallets[uid];
+                            if (u.name.toLowerCase().includes(searchKeyword) || 
+                                u.memberTitle.toLowerCase().replace(/\s+/g, '').includes(searchKeyword)) {
+                                targetUserId = uid;
+                                break;
+                            }
                         }
                     }
 
+                    let foundIndex = targetUserId ? withdrawQueue.findIndex(item => item.userId === targetUserId) : -1;
+
                     if (foundIndex === -1) {
-                        replyMsg = `👑 [แอดมิน] ❌ ไม่พบชื่อผู้แจ้งถอนเงินที่ตรงกับ "${searchKeyword}" ในระบบคิวปัจจุบัน`;
+                        replyMsg = `👑 [แอดมิน] ❌ ไม่พบรายการแจ้งถอนค้างของสมาชิกคนนี้ในคิว`;
                     } else {
                         const targetItem = withdrawQueue[foundIndex];
                         const targetUser = usersWallets[targetItem.userId];
@@ -177,14 +204,14 @@ app.post('/callback', async (req, res) => {
                         targetUser.balance -= targetItem.amount;
                         withdrawQueue.splice(foundIndex, 1);
                         
-                        replyMsg = `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 ${targetUser.memberTitle} (@${targetUser.name}) ถอนเงินสำเร็จ -${targetItem.amount} บาท\n💰 ยอดเงินคงเหลือปัจจุบัน: ${targetUser.balance} บาท\n🔓 ปลดล็อกระบบให้เล่นต่อได้ตามปกติครับ`;
+                        replyMsg = `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 ${targetUser.memberTitle} ถอนเงินสำเร็จ -${targetItem.amount} บาท\n💰 ยอดเงินคงเหลือปัจจุบัน: ${targetUser.balance} บาท\n🔓 ปลดล็อกระบบเรียบร้อย`;
                     }
                 }
             }
             else if (userMsg === 'c') {
                 const qPos = getQueueIndex(userId);
                 if (qPos > 0) {
-                    replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (คุณมีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท อยู่ในคิวที่ ${qPos})`;
+                    replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (มีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท ในคิวที่ ${qPos})`;
                 } else {
                     replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท`;
                 }
@@ -213,7 +240,7 @@ app.post('/callback', async (req, res) => {
                         let summary = "🔴 [ระบบ] แอดมินปิดรับเดิมพันรอบนี้แล้ว!\n📋 [สรุปโพยประจำรอบนี้]:\n";
                         let hasData = false;
                         for (let uid in roundBets) {
-                            summary += `▪️ ${usersWallets[uid].memberTitle} (@${usersWallets[uid].name}): แทงรวม ${roundBets[uid].totalBet} บ. (ค้ำ ${roundBets[uid].holding} บ.)\n`;
+                            summary += `▪️ ${usersWallets[uid].memberTitle}: แทงรวม ${roundBets[uid].totalBet} บ. (ค้ำ ${roundBets[uid].holding} บ.)\n`;
                             hasData = true;
                         }
                         if (!hasData) summary += "❌ ไม่มีใครลงเดิมพันในรอบนี้\n";
@@ -223,7 +250,7 @@ app.post('/callback', async (req, res) => {
             }
             else if (userMsg === 'r') {
                 if (hasPendingWithdraw) {
-                    replyMsg = `${mentionText} ❌ คุณมีรายการแจ้งถอนเงินตกค้างอยู่ ไม่สามารถร่วมทำรายการใดๆ ในวงได้ครับ`;
+                    replyMsg = `${mentionText} ❌ คุณมีรายการแจ้งถอนเงินตกค้างอยู่ ไม่สามารถร่วมทำรายการใดๆ ได้`;
                 } else if (!isRoundOpen) {
                     replyMsg = `${mentionText} ❌ ระบบปิดรอบไปแล้ว ไม่สามารถยกเลิกโพยได้ครับ`;
                 } else if (!roundBets[userId]) {
@@ -242,7 +269,7 @@ app.post('/callback', async (req, res) => {
             else if (userMsg.startsWith('มข-') || userMsg.startsWith('มจ-') || userMsg.startsWith('จ') || (userMsg.includes('-') && !userMsg.startsWith('ผล:'))) {
                 if (hasPendingWithdraw) {
                     const qPos = getQueueIndex(userId);
-                    replyMsg = `${mentionText} ❌ **ไม่สามารถลงโพยได้!** เนื่องจากคุณมีรายการแจ้งถอนเงินค้างอยู่ในระบบ (คิวที่ ${qPos}) กรุณารอแอดมินอนุมัติเงินถอนให้เสร็จสิ้นก่อนครับ`;
+                    replyMsg = `${mentionText} ❌ **ไม่สามารถลงโพยได้!** มีรายการแจ้งถอนค้างอยู่ (คิวที่ ${qPos})`;
                 } 
                 else if (!isRoundOpen) {
                     replyMsg = `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!`;
@@ -290,14 +317,14 @@ app.post('/callback', async (req, res) => {
                         } else {
                             user.balance -= holding; 
                             roundBets[userId] = { type: betType, khas: khas, betPerKha: betPerKha, totalBet: totalBet, holding: holding };
-                            replyMsg = `${mentionText} 🎯 [จดโพยสำเร็จ]\n📝 โพย: ${originalMsg}\n🔒 หักเงินค้ำประกัน: ${holding} บาท\n💰 ยอดเงินคงเหลือหลังหักค้ำ: ${user.balance} บาท\n*(หากต้องการยกเลิกโพยนี้ ให้พิมพ์ R)*`;
+                            replyMsg = `${mentionText} 🎯 [จดโพยสำเร็จ]\n📝 โพย: ${originalMsg}\n🔒 หักเงินค้ำประกัน: ${holding} บาท\n💰 ยอดเงินคงเหลือหลังหักค้ำ: ${user.balance} บาท`;
                         }
                     }
                 }
             }
 
             // ==========================================
-            // PART 4: ระบบคิดเงิน (เฉพาะแอดมินส่งผล)
+            // PART 4: ระบบคิดเงิน
             // ==========================================
             else if (originalMsg.startsWith('ผล:') || originalMsg.startsWith('ผล ')) {
                 if (!isAdmin) {
@@ -317,7 +344,7 @@ app.post('/callback', async (req, res) => {
                             let pUser = usersWallets[uid];
                             let userTotalReturn = 0; 
 
-                            summaryText += `👤 ${pUser.memberTitle} (@${pUser.name}):\n`;
+                            summaryText += `👤 ${pUser.memberTitle}:\n`;
 
                             savedBet.khas.forEach(khaNum => {
                                 let pRaw = results[khaNum - 1];
