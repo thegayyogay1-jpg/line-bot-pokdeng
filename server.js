@@ -205,7 +205,6 @@ app.post('/callback', async (req, res) => {
                     } else if (!roundBets[userId]) {
                         replyMsg = `${mentionText} ❌ คุณยังไม่มีโพยในรอบนี้ให้ยกเลิกครับ`;
                     } else {
-                        // คืนเงินค้ำประกันทั้งหมดที่เคยลงไว้ในรอบนี้กลับกระเป๋าผู้เล่น
                         const savedBet = roundBets[userId];
                         user.balance += savedBet.holding; 
                         delete roundBets[userId]; 
@@ -217,11 +216,9 @@ app.post('/callback', async (req, res) => {
                 // PART 3: ระบบรับโพยแบบชุด (Multi-line) และสะสมยอด
                 // ==========================================
                 else {
-                    // ตรวจสอบว่าข้อความเข้าข่ายการส่งโพยเดิมพันหรือไม่
                     const lines = originalMsg.split('\n');
                     let isBetMessage = false;
                     
-                    // เช็กโครงสร้างเบื้องต้นว่ามีบรรทัดไหนเป็นโพยแทงหรือไม่
                     for (let line of lines) {
                         let cleanLine = line.toLowerCase().replace(/\s+/g, '');
                         if (cleanLine.startsWith('มข-') || cleanLine.startsWith('มจ-') || cleanLine.startsWith('จ') || (cleanLine.includes('-') && !cleanLine.startsWith('ผล:'))) {
@@ -237,20 +234,18 @@ app.post('/callback', async (req, res) => {
                             replyMsg = `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!`;
                         } else {
                             let totalNewHolding = 0;
-                            let newKhasList = []; // เก็บประวัติโพยที่แทงผ่านในรอบนี้
+                            let newKhasList = []; 
 
-                            // เตรียมโครงสร้างข้อมูลรองรับการแทงสะสม
                             if (!roundBets[userId]) {
                                 roundBets[userId] = { 
                                     totalBet: 0, 
                                     holding: 0, 
-                                    khasDetails: {} // โครงสร้างย่อยเก็บแยกรายขาเพื่อเช็กการแทงซ้ำ { '1': betAmount, '2': betAmount }
+                                    khasDetails: {} 
                                 };
                             }
 
                             let currentBetData = roundBets[userId];
 
-                            // วนลูปตรวจสลีปและประมวลผลโพยทีละบรรทัด
                             for (let line of lines) {
                                 let cleanLine = line.toLowerCase().replace(/\s+/g, '');
                                 if (!cleanLine) continue;
@@ -269,7 +264,6 @@ app.post('/callback', async (req, res) => {
                                     const parts = cleanLine.substring(1).split('-');
                                     if (parts.length === 2) {
                                         let rawKhas = parts[0].split('').map(Number);
-                                        // ✨ กรองเอาเฉพาะเลขขา 1-7 เท่านั้น
                                         khas = rawKhas.filter(k => k >= 1 && k <= 7);
                                         betPerKha = parseInt(parts[1]);
                                     }
@@ -278,27 +272,25 @@ app.post('/callback', async (req, res) => {
                                     const parts = cleanLine.split('-');
                                     if (parts.length === 2 && !isNaN(parts[0])) {
                                         let rawKhas = parts[0].split('').map(Number);
-                                        // ✨ กรองเอาเฉพาะเลขขา 1-7 เท่านั้น
                                         khas = rawKhas.filter(k => k >= 1 && k <= 7);
                                         betPerKha = parseInt(parts[1]);
                                     }
                                 }
 
-                                // หากโพยบรรทัดนี้ถูกต้องและมีขาที่เล่นได้จริง
                                 if (khas.length > 0 && !isNaN(betPerKha) && betPerKha > 0) {
                                     khas.forEach(k => {
-                                        // สะสมยอดลงรายขาเดิม หรือสร้างยอดใหม่ถ้ายังไม่มี
                                         if (!currentBetData.khasDetails[k]) {
                                             currentBetData.khasDetails[k] = { type: betType || 'เดี่ยว', bet: 0 };
                                         }
                                         currentBetData.khasDetails[k].bet += betPerKha;
-                                        if (betType) currentBetData.khasDetails[k].type = betType; // อัปเดตประเภทถ้าเป็นโพยเหมา
+                                        if (betType) currentBetData.khasDetails[k].type = betType; 
                                         
                                         lineTotalBet += betPerKha;
                                         lineHolding += (betPerKha * 2);
                                     });
 
-                                    totalNewNewHolding += lineHolding;
+                                    // ✅ แก้ไขจาก totalNewNewHolding -> totalNewHolding เรียบร้อยครับ
+                                    totalNewHolding += lineHolding;
                                     currentBetData.totalBet += lineTotalBet;
                                     currentBetData.holding += lineHolding;
                                     
@@ -307,16 +299,11 @@ app.post('/callback', async (req, res) => {
                                 }
                             }
 
-                            // ตรวจสอบกระเป๋าเงินผู้เล่นเทียบกับเงินค้ำประกันชุดใหม่ที่เพิ่มเข้ามา
                             if (totalNewHolding > 0) {
                                 if (user.balance < totalNewHolding) {
-                                    // หากเงินไม่พอ ให้โรลแบ็ค (Rollback) คืนค่าเดิมก่อนบวกโพยชุดนี้
-                                    // เพื่อความง่าย ล้างรายการคำนวณของชุดนี้ออกทั้งหมดโดยสั่งลบออกคืนระบบค้ำประกันเก่า
-                                    replyMsg = `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการเพิ่มอีก ${totalNewHolding} บ.)`;
-                                    
-                                    // คืนค่าโครงสร้างระบบ (รีเซ็ตรอบเดิมพันของผู้เล่นคนนี้ เพื่อป้องกันข้อมูลเพี้ยน)
-                                    delete roundBets[userId];
-                                    replyMsg += `\n⚠️ ระบบได้ทำการล้างโพยเก่าของรอบนี้ออกเพื่อความปลอดภัย โปรดเติมเงินหรือส่งโพยใหม่ขอบเขตเงินที่พอครับ`;
+                                    replyMsg = `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการค้ำเพิ่ม ${totalNewHolding} บ.)`;
+                                    delete roundBets[userId]; // เคลียร์เพื่อเซฟความปลอดภัย
+                                    replyMsg += `\n⚠️ ระบบได้ล้างโพยเก่าของรอบนี้ออกเพื่อป้องกันยอดเพี้ยน โปรดส่งโพยใหม่อีกครั้งครับ`;
                                 } else {
                                     user.balance -= totalNewHolding;
                                     replyMsg = `${mentionText} 🎯 [จดโพยชุดสำเร็จ]\n📥 โพยที่รับเพิ่มรอบนี้: ${newKhasList.join(', ')}\n💰 ยอดเดิมพันรวมสะสมปัจจุบัน: ${currentBetData.totalBet} บ. (หักค้ำรวม: ${currentBetData.holding} บ.)`;
@@ -385,7 +372,6 @@ app.post('/callback', async (req, res) => {
                             let userTotalReturn = 0; 
                             let totalWinLoss = 0;   
 
-                            // วนลูปคิดเงินจากโครงสร้างรายขาที่บันทึกสะสมไว้ทั้งหมด
                             for (let khaNum in savedBet.khasDetails) {
                                 let khaData = savedBet.khasDetails[khaNum];
                                 let pRaw = results[parseInt(khaNum) - 1];
