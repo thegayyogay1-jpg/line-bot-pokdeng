@@ -19,6 +19,7 @@ app.post('/callback', async (req, res) => {
                 replyMsg = `🎯 บอทได้รับยอดแทงเรียบร้อย: ${money} บาท`;
             }
 
+            // ถ้ามีข้อความที่จะตอบกลับ ให้ส่งไปหา LINE ทันที
             if (replyMsg) {
                 try {
                     await fetch('https://api.line.me/v2/bot/message/reply', {
@@ -32,6 +33,7 @@ app.post('/callback', async (req, res) => {
                             messages: [{ type: 'text', text: replyMsg }]
                         })
                     });
+                    console.log('ส่งข้อความสำเร็จ:', replyMsg);
                 } catch (err) {
                     console.error('Error sending to LINE:', err);
                 }
