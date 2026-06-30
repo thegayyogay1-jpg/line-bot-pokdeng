@@ -11,8 +11,9 @@ let withdrawQueue = [];
 
 // 👑 [ตั้งค่าแอดมิน] สามารถใส่ LINE USER ID ของแอดมินกี่คนก็ได้ในอาร์เรย์นี้ครับ
 const ADMIN_LIST = [
-    "ใส่_LINE_USER_ID_แอดมินคนแรกตรงนี้",
-    "ใส่_LINE_USER_ID_แอดมินคนที่สองตรงนี้ (ถ้ามี)"
+    "U0d1e353091d90af57b37ff38d36e29bc",
+    "U7ab0fc440b4867017066a5f9265ba4f9",
+    "ใส่IDแอดมิน"
 ]; 
 
 function parseCard(cardStr) {
@@ -182,8 +183,11 @@ app.post('/callback', async (req, res) => {
             }
             else if (userMsg === 'c') {
                 const qPos = getQueueIndex(userId);
-                // ⚙️ แก้ไขตรงนี้ชั่วคราวเพื่อให้บอทส่งไอดีกลับมาให้เราคัดลอกครับ
-                replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n🆔 ID ของคุณคือ: ${userId}`;
+                if (qPos > 0) {
+                    replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (คุณมีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท อยู่ในคิวที่ ${qPos})`;
+                } else {
+                    replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท`;
+                }
             }
 
             // ==========================================
