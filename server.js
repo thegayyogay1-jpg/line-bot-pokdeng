@@ -213,7 +213,7 @@ app.post('/callback', async (req, res) => {
                 }
 
                 // ==========================================
-                // PART 3: ระบบรับโพยแบบชุด (Multi-line) และสะสมยอด
+                // PART 3: ระบบรับโพยสะสมยอด (ปรับปรุงรับแค่ ขา 1-6 เท่านั้น)
                 // ==========================================
                 else {
                     const lines = originalMsg.split('\n');
@@ -235,6 +235,7 @@ app.post('/callback', async (req, res) => {
                         } else {
                             let totalNewHolding = 0;
                             let newKhasList = []; 
+                            let hasErrorLeg = false; 
 
                             if (!roundBets[userId]) {
                                 roundBets[userId] = { 
@@ -245,6 +246,7 @@ app.post('/callback', async (req, res) => {
                             }
 
                             let currentBetData = roundBets[userId];
+                            let backupKhasDetails = JSON.parse(JSON.stringify(currentBetData.khasDetails)); 
 
                             for (let line of lines) {
                                 let cleanLine = line.toLowerCase().replace(/\s+/g, '');
@@ -252,28 +254,41 @@ app.post('/callback', async (req, res) => {
 
                                 let betType = "", khas = [], betPerKha = 0, lineTotalBet = 0, lineHolding = 0;
 
+                                // ✨ ปรับให้ มข และ มจ คลุมเฉพาะขาผู้เล่นคือ 1 ถึง 6 เท่านั้น (ตัดขา 7 ออก)
                                 if (cleanLine.startsWith('มข-')) {
                                     betPerKha = parseInt(cleanLine.replace('มข-', ''));
-                                    if (!isNaN(betPerKha) && betPerKha > 0) { betType = "มข"; khas = [1,2,3,4,5,6,7]; }
+                                    if (!isNaN(betPerKha) && betPerKha > 0) { betType = "มข"; khas = [1,2,3,4,5,6]; }
                                 }
                                 else if (cleanLine.startsWith('มจ-')) {
                                     betPerKha = parseInt(cleanLine.replace('มจ-', ''));
-                                    if (!isNaN(betPerKha) && betPerKha > 0) { betType = "มจ"; khas = [1,2,3,4,5,6,7]; }
+                                    if (!isNaN(betPerKha) && betPerKha > 0) { betType = "มจ"; khas = [1,2,3,4,5,6]; }
                                 }
                                 else if (cleanLine.startsWith('จ')) {
                                     const parts = cleanLine.substring(1).split('-');
                                     if (parts.length === 2) {
                                         let rawKhas = parts[0].split('').map(Number);
-                                        khas = rawKhas.filter(k => k >= 1 && k <= 7);
-                                        betPerKha = parseInt(parts[1]);
+                                        // ✨ ดักจับ: ขาฝั่งผู้เล่นต้องอยู่ระหว่างเลข 1-6 เท่านั้น (ถ้ามีเลข 7, 8, 9 หรือ 0 ถือว่าผิด)
+                                        let invalidCheck = rawKhas.some(k => k < 1 || k > 6 || isNaN(k));
+                                        if (!invalidCheck) {
+                                            khas = rawKhas;
+                                            betPerKha = parseInt(parts[1]);
+                                        } else {
+                                            hasErrorLeg = true;
+                                        }
                                     }
                                 }
                                 else if (cleanLine.includes('-')) {
                                     const parts = cleanLine.split('-');
                                     if (parts.length === 2 && !isNaN(parts[0])) {
                                         let rawKhas = parts[0].split('').map(Number);
-                                        khas = rawKhas.filter(k => k >= 1 && k <= 7);
-                                        betPerKha = parseInt(parts[1]);
+                                        // ✨ ดักจับ: ขาฝั่งผู้เล่นต้องอยู่ระหว่างเลข 1-6 เท่านั้น
+                                        let invalidCheck = rawKhas.some(k => k < 1 || k > 6 || isNaN(k));
+                                        if (!invalidCheck) {
+                                            khas = rawKhas;
+                                            betPerKha = parseInt(parts[1]);
+                                        } else {
+                                            hasErrorLeg = true;
+                                        }
                                     }
                                 }
 
@@ -289,7 +304,6 @@ app.post('/callback', async (req, res) => {
                                         lineHolding += (betPerKha * 2);
                                     });
 
-                                    // ✅ แก้ไขจาก totalNewNewHolding -> totalNewHolding เรียบร้อยครับ
                                     totalNewHolding += lineHolding;
                                     currentBetData.totalBet += lineTotalBet;
                                     currentBetData.holding += lineHolding;
@@ -299,17 +313,18 @@ app.post('/callback', async (req, res) => {
                                 }
                             }
 
-                            if (totalNewHolding > 0) {
+                            if (totalNewHolding > 0 && !hasErrorLeg) {
                                 if (user.balance < totalNewHolding) {
-                                    replyMsg = `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการค้ำเพิ่ม ${totalNewHolding} บ.)`;
-                                    delete roundBets[userId]; // เคลียร์เพื่อเซฟความปลอดภัย
-                                    replyMsg += `\n⚠️ ระบบได้ล้างโพยเก่าของรอบนี้ออกเพื่อป้องกันยอดเพี้ยน โปรดส่งโพยใหม่อีกครั้งครับ`;
+                                    replyMsg = `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการค้ำเพิ่มอีก ${totalNewHolding} บ.)`;
+                                    delete roundBets[userId]; 
+                                    replyMsg += `\n⚠️ ระบบได้ล้างโพยเก่าของรอบนี้ออกเพื่อความปลอดภัย โปรดส่งโพยใหม่อีกครั้งครับ`;
                                 } else {
                                     user.balance -= totalNewHolding;
-                                    replyMsg = `${mentionText} 🎯 [จดโพยชุดสำเร็จ]\n📥 โพยที่รับเพิ่มรอบนี้: ${newKhasList.join(', ')}\n💰 ยอดเดิมพันรวมสะสมปัจจุบัน: ${currentBetData.totalBet} บ. (หักค้ำรวม: ${currentBetData.holding} บ.)`;
+                                    replyMsg = `${mentionText} 🎯 [จดโพยชุดสำเร็จ]\n📥 โพยที่รับเพิ่มรอบนี้: ${newKhasList.join(', ')}\n💰 ยอดเดิมพันรวมสะสมปัจจุบัน: ${currentBetData.totalBet} บ. (หักค้ำรวม: ${currentBetData.holding} บ.)\n💳 **ยอดเงินคงเหลือในกระเป๋าคุณ: ${user.balance} บาท**`;
                                 }
                             } else {
-                                replyMsg = `${mentionText} ❌ รูปแบบโพยไม่ถูกต้อง หรือระบุเลขขาเกินขอบเขต (รับเฉพาะขา 1-7 เท่านั้นครับ)`;
+                                currentBetData.khasDetails = backupKhasDetails;
+                                replyMsg = `${mentionText} ❌ โพยไม่สำเร็จ! ตรวจพบรูปแบบผิดพลาด หรือมีการระบุเลขขาเกินขอบเขต (ระบบรับเฉพาะเลขขาผู้เล่น 1 ถึง 6 เท่านั้นครับ)`;
                                 if (currentBetData.totalBet === 0) delete roundBets[userId];
                             }
                         }
@@ -317,7 +332,7 @@ app.post('/callback', async (req, res) => {
                 }
 
                 // ==========================================
-                // PART 4: ระบบรับผลรอบแรก (จับแต้ม/โชว์สถานะขา) -> ยังไม่ตัดยอดเงิน
+                // PART 4: ระบบรับผลรอบแรก (ขาผู้เล่น 1-6 เทียบกับ เจ้ามือขา 7)
                 // ==========================================
                 if (originalMsg.startsWith('ผล:') || originalMsg.startsWith('ผล ')) {
                     if (!isAdmin) {
@@ -326,15 +341,18 @@ app.post('/callback', async (req, res) => {
                         const resultStr = originalMsg.replace(/^ผล:\s*|^ผล\s+/i, '');
                         const results = resultStr.split(','); 
                         
+                        // ในระบบผลลัพธ์: จะต้องมีผลไพ่ทั้งหมด 7 ชุด (6 ชุดแรกคือขาผู้เล่น, ชุดที่ 7 ตัวสุดท้ายคือเจ้ามือ)
                         if (results.length >= 2) {
-                            let dealerRaw = results[results.length - 1];
+                            let dealerRaw = results[results.length - 1]; // ขาตัวสุดท้ายคือเจ้ามือ (ขา 7)
                             let dealerResult = parseCard(dealerRaw);
                             
                             pendingResults = { dealerResult, results };
 
-                            let previewText = `🃏 [ตรวจสอบผลไพ่ประจำรอบ]\n👑 เจ้ามือ: ${dealerResult.score} แต้ม (${dealerResult.deng} เด้ง)\n------------------------\n`;
+                            let previewText = `🃏 [ตรวจสอบผลไพ่ประจำรอบ]\n👑 เจ้ามือ (ขา 7): ${dealerResult.score} แต้ม (${dealerResult.deng} เด้ง)\n------------------------\n`;
                             
+                            // วนลูปอ่านผลไพ่ของขาผู้เล่นเฉพาะขา 1 ถึง ขา 6 เท่านั้น
                             for (let i = 1; i <= results.length - 1; i++) {
+                                if (i > 6) break; // ป้องกันหากมีข้อมูลเกิน
                                 let pRaw = results[i - 1];
                                 let playerResult = parseCard(pRaw);
                                 let status = "";
