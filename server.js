@@ -3,13 +3,17 @@ const app = express();
 app.use(express.json());
 
 // ฐานข้อมูลจำลอง (จำในแรม)
-let usersWallets = {}; // { userId: { name: "ชื่อ", balance: 0 } }
+let usersWallets = {}; // { userId: { memberNumber: 1, memberTitle: "สมาชิกที่ 1", name: "ชื่อ LINE", balance: 0 } }
+let nextMemberId = 1;  // ตัวนับลำดับสมาชิก 1, 2, 3...
 let isRoundOpen = false;
 let roundBets = {}; 
 let withdrawQueue = []; 
 
-// ⚠️ อย่าลืมใส่ LINE USER ID ของคุณ (แอดมิน) ตรงนี้ เพื่อให้ได้รับสิทธิ์คุมวง
-const ADMIN_USER_ID = "ใส่_LINE_USER_ID_ของแอดมินตรงนี้"; 
+// 👑 [ตั้งค่าแอดมิน] สามารถใส่ LINE USER ID ของแอดมินกี่คนก็ได้ในอาร์เรย์นี้ครับ
+const ADMIN_LIST = [
+    "6830197,
+    "ใส่_LINE_USER_ID_แอดมินคนที่สองตรงนี้ (ถ้ามี)"
+]; 
 
 function parseCard(cardStr) {
     if (!cardStr) return { score: 0, deng: 1 };
@@ -43,23 +47,35 @@ app.post('/callback', async (req, res) => {
             const userMsg = originalMsg.toLowerCase().replace(/\s+/g, '');
             let replyMsg = "";
 
-            const isAdmin = (userId === ADMIN_USER_ID);
+            // ตรวจสอบสิทธิ์แอดมินจากระบบ List
+            const isAdmin = ADMIN_LIST.includes(userId);
 
-            // ระบบจำและแท็กชื่อสมาชิกใหม่อัตโนมัติ
+            // 🆕 ระบบจดจำ ดึงชื่อไลน์ และมอบหมายเลขสมาชิกประจำตัว (สมาชิกที่ 1, 2, 3...) อัตโนมัติ
             if (!usersWallets[userId]) {
+                let displayName = "ผู้เล่นทั่วไป";
                 try {
                     const profileRes = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
                         headers: { 'Authorization': `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}` }
                     });
                     const profile = await profileRes.json();
-                    usersWallets[userId] = { name: profile.displayName || "สมาชิกใหม่", balance: 0 };
+                    if (profile.displayName) displayName = profile.displayName;
                 } catch (e) {
-                    usersWallets[userId] = { name: "สมาชิกใหม่", balance: 0 };
+                    console.error("ดึงโปรไฟล์ไลน์ล้มเหลว:", e);
                 }
+                
+                usersWallets[userId] = { 
+                    memberNumber: nextMemberId,
+                    memberTitle: `สมาชิกที่ ${nextMemberId}`,
+                    name: displayName, 
+                    balance: 0 
+                };
+                nextMemberId++; // เพิ่มลำดับคนถัดไป
             }
             
             const user = usersWallets[userId];
-            const mentionText = `👤 @${user.name} `;
+            // ข้อความแท็กเรียกชื่อที่จะแสดงในแชท: "สมาชิกที่ 1 (@ชื่อไลน์)"
+            const mentionText = `👤 ${user.memberTitle} (@${user.name}) `;
+            
             const getQueueIndex = (uid) => withdrawQueue.findIndex(item => item.userId === uid) + 1;
             const hasPendingWithdraw = getQueueIndex(userId) > 0;
 
@@ -70,66 +86,49 @@ app.post('/callback', async (req, res) => {
                 replyMsg = `📖 [คู่มือคีย์ลัดระบบป๊อกเด้ง]\n` +
                            `------------------------\n` +
                            `📌 **สำหรับผู้เล่นทั่วไป:**\n` +
-                           `• พิมพ์ [C] : เช็คยอดเงินคงเหลือในกระเป๋า\n` +
-                           `• พิมพ์ [ถอน จำนวนเงิน] : แจ้งถอนเงิน (เข้าคิวรอแอดมินอนุมัติ)\n` +
-                           `• พิมพ์ [R] : ยกเลิกโพยล่าสุดประจำรอบ\n` +
+                           `• พิมพ์ [C] : เช็คเงินกระเป๋าและรหัสสมาชิก\n` +
+                           `• พิมพ์ [ถอน จำนวนเงิน] : แจ้งถอนเงินคิว\n` +
+                           `• พิมพ์ [R] : ยกเลิกโพยประจำรอบ\n` +
                            `• ส่งโพยแทง : [ขา]-[ราคา] (เช่น 123-50)\n\n` +
                            `👑 **สำหรับแอดมินเท่านั้น:**\n` +
-                           `• พิมพ์ [เติม ชื่อ/แท็ก จำนวนเงิน] : เติมเงินให้ผู้เล่นรายคน\n` +
-                           `• หรือกด Reply ข้อความลูกค้า แล้วพิมพ์ [เติม จำนวนเงิน]\n` +
-                           `• พิมพ์ [Y ชื่อผู้เล่น] : อนุมัติถอนเงินตามชื่อคิว\n` +
+                           `• พิมพ์ [เติม ชื่อหรือแท็กหรือสมาชิกที่X จำนวนเงิน] : เติมเงินให้ผู้เล่น\n` +
+                           `• พิมพ์ [Y ชื่อหรือแท็กหรือสมาชิกที่X] : อนุมัติคิวถอนเงิน\n` +
                            `• พิมพ์ [O] : เปิดรอบ / [X] : ปิดรอบสรุปโพย\n` +
-                           `• พิมพ์ [ผล: ไพ่ขา1...,ไพ่เจ้ามือ] : คิดเงินประจำรอบ`;
+                           `• พิมพ์ [ผล: ไพ่ขา1...,ไพ่เจ้ามือ] : คิดเงินรอบ`;
             }
 
             // ==========================================
-            // PART 1: ระบบเติมเงิน (เวอร์ชันใหม่) / ถอนเงิน / คอนเฟิร์ม Y
+            // PART 1: ระบบเติมเงิน / ถอนเงิน / คอนเฟิร์ม Y (เวอร์ชันอัจฉริยะ)
             // ==========================================
             else if (originalMsg.startsWith('เติม')) {
                 if (!isAdmin) {
-                    replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งเติมเงินครับ!`;
+                    replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งเติมเงินครับ!\n*(ID ของคุณคือ: ${userId})`;
                 } else {
-                    let targetUserId = null;
-                    let amount = 0;
+                    const tokens = originalMsg.split(/\s+/);
+                    if (tokens.length >= 3) {
+                        const searchKeyword = tokens[1].replace('@', '').trim().toLowerCase();
+                        const amount = parseInt(tokens[2]);
+                        let targetUserId = null;
 
-                    // วิธีที่ 1: แอดมินกด Reply (ตอบกลับ) ข้อความของคนที่จะเติมเงิน แล้วพิมพ์ "เติม 1000"
-                    if (event.message.quotedMessageId) {
-                        const cleanMsg = originalMsg.replace('เติม', '').trim();
-                        amount = parseInt(cleanMsg);
-                        
-                        // ค้นหาข้อความที่ถูก Reply เพื่อหา userId ต้นทาง (ใช้ webhook context ดักจับ)
-                        // เพื่อความแม่นยำสูงสุดในกลุ่มไลน์ แนะนำให้ใช้พิมพ์ชื่อแนบไปด้วยตามวิธีที่ 2 ด้านล่าง หรือถ้าบอทจำ user ล่าสุดไว้ได้
-                        targetUserId = event.message.quotedMessageId ? "reply_mode" : null;
-                    }
-
-                    // วิธีที่ 2: แอดมินพิมพ์ "เติม @ชื่อผู้เล่น 1000" หรือ "เติม ชื่อผู้เล่น 1000"
-                    if (targetUserId !== "reply_mode") {
-                        const tokens = originalMsg.split(/\s+/); // แยกด้วยช่องว่าง
-                        if (tokens.length >= 3) {
-                            const targetName = tokens[1].replace('@', '').trim();
-                            amount = parseInt(tokens[2]);
-
-                            // วนลูปหาคนที่มีชื่อตรงกันในฐานข้อมูลบอท
-                            for (let uid in usersWallets) {
-                                if (usersWallets[uid].name.toLowerCase().includes(targetName.toLowerCase())) {
-                                    targetUserId = uid;
-                                    break;
-                                }
+                        // วนลูปหาในฐานข้อมูล: รองรับทั้งค้นหาด้วยชื่อไลน์, ชื่อย่อย หรือชื่อ "สมาชิกที่ X"
+                        for (let uid in usersWallets) {
+                            let u = usersWallets[uid];
+                            if (u.name.toLowerCase().includes(searchKeyword) || 
+                                u.memberTitle.toLowerCase().replace(/\s+/g, '').includes(searchKeyword)) {
+                                targetUserId = uid;
+                                break;
                             }
                         }
-                    }
 
-                    // จัดการเครดิตเงิน
-                    if (!targetUserId || isNaN(amount) || amount <= 0) {
-                        replyMsg = `👑 [แอดมิน] ❌ รูปแบบคำสั่งเติมเงินไม่ถูกต้อง\n📌 กรุณาพิมพ์: **เติม [ชื่อหรือแท็กคนเล่น] [จำนวนเงิน]** (เช่น เติม สมาชิกที่1 1000)`;
-                    } else {
-                        // หากเป็นการ Reply ข้อความ (ดักจับหาเป้าหมายจากคิวหรือประวัติผู้เล่น)
-                        if (targetUserId === "reply_mode") {
-                             replyMsg = `👑 [แอดมิน] ❌ ระบบตรวจไม่พบ ID จากการ Reply กรุณาใช้การพิมพ์ชื่อระบุตัวตน เช่น **เติม ชื่อลูกค้า ${amount}** เพื่อความแม่นยำครับ`;
+                        if (!targetUserId || isNaN(amount) || amount <= 0) {
+                            replyMsg = `👑 [แอดมิน] ❌ ไม่พบผู้เล่นที่ค้นหา หรือจำนวนเงินไม่ถูกต้อง\n📌 แนะนำพิมพ์: **เติม @ชื่อไลน์ ${amount}** หรือ **เติม สมาชิกที่1 ${amount}**`;
                         } else {
                             usersWallets[targetUserId].balance += amount;
-                            replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 @${usersWallets[targetUserId].name}\n💰 ยอดเงินคงเหลือปัจจุบัน: ${usersWallets[targetUserId].balance} บาท`;
+                            let tUser = usersWallets[targetUserId];
+                            replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle} (@${tUser.name})\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท`;
                         }
+                    } else {
+                        replyMsg = `👑 [แอดมิน] ❌ รูปแบบคำสั่งไม่ครบถ้วน กรุณาพิมพ์: เติม [ชื่อผู้เล่น] [จำนวนเงิน]`;
                     }
                 }
             }
@@ -154,19 +153,22 @@ app.post('/callback', async (req, res) => {
                 if (!isAdmin) {
                     replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถอนุมัติรายการถอนเงินได้ครับ`;
                 } else {
-                    const targetName = originalMsg.substring(2).trim().replace('@', '');
+                    const searchKeyword = originalMsg.substring(2).trim().replace('@', '').toLowerCase();
                     let foundIndex = -1;
                     
+                    // ค้นหาเป้าหมายจากคิวถอนเงิน
                     for (let i = 0; i < withdrawQueue.length; i++) {
                         let uid = withdrawQueue[i].userId;
-                        if (usersWallets[uid].name.toLowerCase().includes(targetName.toLowerCase())) {
+                        let u = usersWallets[uid];
+                        if (u.name.toLowerCase().includes(searchKeyword) || 
+                            u.memberTitle.toLowerCase().replace(/\s+/g, '').includes(searchKeyword)) {
                             foundIndex = i;
                             break;
                         }
                     }
 
                     if (foundIndex === -1) {
-                        replyMsg = `👑 [แอดมิน] ❌ ไม่พบชื่อผู้แจ้งถอนเงินที่ตรงกับ "${targetName}" ในระบบคิวปัจจุบัน`;
+                        replyMsg = `👑 [แอดมิน] ❌ ไม่พบชื่อผู้แจ้งถอนเงินที่ตรงกับ "${searchKeyword}" ในระบบคิวปัจจุบัน`;
                     } else {
                         const targetItem = withdrawQueue[foundIndex];
                         const targetUser = usersWallets[targetItem.userId];
@@ -174,7 +176,7 @@ app.post('/callback', async (req, res) => {
                         targetUser.balance -= targetItem.amount;
                         withdrawQueue.splice(foundIndex, 1);
                         
-                        replyMsg = `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 @${targetUser.name} ถอนเงินสำเร็จ -${targetItem.amount} บาท\n💰 ยอดเงินคงเหลือปัจจุบัน: ${targetUser.balance} บาท\n🔓 ปลดล็อกระบบกลับเข้าสู่วงเล่นได้ตามปกติครับ`;
+                        replyMsg = `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 ${targetUser.memberTitle} (@${targetUser.name}) ถอนเงินสำเร็จ -${targetItem.amount} บาท\n💰 ยอดเงินคงเหลือปัจจุบัน: ${targetUser.balance} บาท\n🔓 ปลดล็อกระบบให้เล่นต่อได้ตามปกติครับ`;
                     }
                 }
             }
@@ -210,7 +212,7 @@ app.post('/callback', async (req, res) => {
                         let summary = "🔴 [ระบบ] แอดมินปิดรับเดิมพันรอบนี้แล้ว!\n📋 [สรุปโพยประจำรอบนี้]:\n";
                         let hasData = false;
                         for (let uid in roundBets) {
-                            summary += `▪️ @${usersWallets[uid].name}: แทงรวม ${roundBets[uid].totalBet} บ. (ค้ำ ${roundBets[uid].holding} บ.)\n`;
+                            summary += `▪️ ${usersWallets[uid].memberTitle} (@${usersWallets[uid].name}): แทงรวม ${roundBets[uid].totalBet} บ. (ค้ำ ${roundBets[uid].holding} บ.)\n`;
                             hasData = true;
                         }
                         if (!hasData) summary += "❌ ไม่มีใครลงเดิมพันในรอบนี้\n";
@@ -314,7 +316,7 @@ app.post('/callback', async (req, res) => {
                             let pUser = usersWallets[uid];
                             let userTotalReturn = 0; 
 
-                            summaryText += `👤 @${pUser.name}:\n`;
+                            summaryText += `👤 ${pUser.memberTitle} (@${pUser.name}):\n`;
 
                             savedBet.khas.forEach(khaNum => {
                                 let pRaw = results[khaNum - 1];
