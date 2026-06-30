@@ -135,29 +135,17 @@ app.post('/callback', async (req, res) => {
                 else if (userMsg.startsWith('ถอน')) {
                     const qPos = getQueueIndex(userId);
                     if (qPos > 0) {
-                        replyMessageObject = { type: 'text', text: `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})` };
+                        replyMsg = `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})`;
                     } else {
                         const amount = parseInt(userMsg.replace('ถอน', ''));
                         if (!isNaN(amount) && amount > 0) {
                             if (user.balance < amount) {
-                                replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)` };
+                                replyMsg = `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)`;
                             } else {
                                 withdrawQueue.push({ userId: userId, amount: amount });
-                                
-                                // 🌟 ปรับแต่งการตอบกลับแบบใหม่ (วิธีที่ 1): แท็กชื่อผู้ถอนกลางกลุ่ม ให้แอดมินจิ้มเข้าแชทส่วนตัวได้ทันที
-                                replyMessageObject = {
-                                    type: 'text',
-                                    text: `🔔 [คำขอถอนเงินใหม่]\n👤 @ผู้เล่น แทงสำเร็จ (${user.memberTitle})\n💰 จำนวนเงิน: ${amount} บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📌 แอดมินสามารถกดที่ชื่อแท็กสีฟ้าด้านบนเพื่อเปิดโปรไฟล์ และทักแชทส่วนตัวไปโอนเงินได้ทันทีครับ`,
-                                    mention: {
-                                        mentions: [
-                                            {
-                                                index: 19, // ตำแหน่งตัวอักษรเริ่มต้นของคำว่า @ผู้เล่น ในข้อความ text ด้านบน
-                                                length: 7, // ความยาวของข้อความแท็กที่จะแปลงเป็นสีฟ้า
-                                                userId: userId // แฟลชแท็กไปยังผู้เล่นคนนั้นโดยตรง
-                                            }
-                                        ]
-                                    }
-                                };
+                                // ✨ ปรับข้อความให้แท็กและแสดงชื่อให้ชัดเจนขึ้น เพื่อให้แอดมินกดที่ชื่อเพื่อทักแชทส่วนตัวได้ง่าย
+                                let displayName = user.name !== "ผู้เล่นทั่วไป" ? `(@${user.name})` : "";
+                                replyMsg = `🔔 [คำขอถอนเงินใหม่]\n👤 ${user.memberTitle} ${displayName}\n💰 จำนวนเงิน: **${amount}** บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📢 แอดมินสามารถกดที่ชื่อหรือโปรไฟล์ของผู้เล่นในกลุ่มนี้ เพื่อทักแชทส่วนตัวไปดูเลขบัญชีได้เลยครับ`;
                             }
                         }
                     }
