@@ -11,7 +11,7 @@ let withdrawQueue = [];
 
 // 👑 [ตั้งค่าแอดมิน] ใส่ LINE USER ID ของแอดมินตรงนี้ครับ
 const ADMIN_LIST = [
-    "ใส่_LINE_USER_ID_แอดมินคนแรกตรงนี้",
+    "U0d1e353091d90af57b37ff38d36e29bc",
     "ใส่_LINE_USER_ID_แอดมินคนที่สองตรงนี้ (ถ้ามี)"
 ]; 
 
