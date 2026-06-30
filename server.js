@@ -47,17 +47,19 @@ app.post('/callback', async (req, res) => {
             const userId = event.source.userId;
             const originalMsg = event.message.text.trim();
             const userMsg = originalMsg.toLowerCase().replace(/\s+/g, '');
-            let replyMsg = "";
+            
+            // เตรียมก้อนข้อความสำหรับใช้ส่งกลับ LINE API
+            let replyMessageObject = null; 
 
             const isAdmin = ADMIN_LIST.includes(userId);
 
             // 🧽 [คำสั่งแอดมิน] ล้างระบบ
             if (userMsg === 'ล้างระบบ') {
                 if (!isAdmin) {
-                    replyMsg = "❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งนี้ครับ";
+                    replyMessageObject = { type: 'text', text: "❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งนี้ครับ" };
                 } else {
                     usersWallets = {}; nextMemberId = 1; isRoundOpen = false; roundBets = {}; withdrawQueue = []; pendingResults = null;
-                    replyMsg = "👑 [แอดมิน] ♻️ ล้างระบบสมาชิกเริ่มต้นใหม่เรียบร้อยแล้วครับ!";
+                    replyMessageObject = { type: 'text', text: "👑 [แอดมิน] ♻️ ล้างระบบสมาชิกเริ่มต้นใหม่เรียบร้อยแล้วครับ!" };
                 }
             }
 
@@ -78,12 +80,22 @@ app.post('/callback', async (req, res) => {
                 const getQueueIndex = (uid) => withdrawQueue.findIndex(item => item.userId === uid) + 1;
                 const hasPendingWithdraw = getQueueIndex(userId) > 0;
 
+                // ตรวจสอบและดึงชื่อเล่นจาก Profile ชั่วคราวถ้ามีคนแท็กเรียก
+                if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
+                    let firstMention = event.message.mention.mentions[0];
+                    if (firstMention.userId === userId) {
+                        let parts = originalMsg.split(/\s+/);
+                        let rawName = parts.find(p => p.includes('@'));
+                        if (rawName) user.name = rawName.replace('@', '').trim();
+                    }
+                }
+
                 // ==========================================
-                // PART 1: ระบบเติมเงิน / ถอนเงิน / เช็กยอดกระเป๋า
+                // PART 1: ระบบเติมเงิน / ถอนเงิน (แจ้งแท็กตามวิธีที่ 1) / เช็กยอดกระเป๋า
                 // ==========================================
                 if (originalMsg.startsWith('เติม')) {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์เติมเงินครับ!`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์เติมเงินครับ!` };
                     } else {
                         let targetUserId = null;
                         let amount = 0;
@@ -111,34 +123,48 @@ app.post('/callback', async (req, res) => {
                         }
 
                         if (!targetUserId || isNaN(amount) || amount <= 0) {
-                            replyMsg = `👑 [แอดมิน] ❌ เติมเงินไม่สำเร็จ\n📌 พิมพ์: **เติม [เลขสมาชิก] [เงิน]** (เช่น เติม 3 1000)`;
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ เติมเงินไม่สำเร็จ\n📌 พิมพ์: **เติม [เลขสมาชิก] [เงิน]** (เช่น เติม 3 1000)` };
                         } else {
                             usersWallets[targetUserId].balance += amount;
                             let tUser = usersWallets[targetUserId];
                             let nameDisplay = tUser.name !== "ผู้เล่นทั่วไป" ? ` (@${tUser.name})` : "";
-                            replyMsg = `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle}${nameDisplay}\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท`;
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ✅ เติมเงินสำเร็จ! +${amount} บาท\n👤 ${tUser.memberTitle}${nameDisplay}\n💰 ยอดเงินคงเหลือปัจจุบัน: ${tUser.balance} บาท` };
                         }
                     }
                 }
                 else if (userMsg.startsWith('ถอน')) {
                     const qPos = getQueueIndex(userId);
                     if (qPos > 0) {
-                        replyMsg = `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})` };
                     } else {
                         const amount = parseInt(userMsg.replace('ถอน', ''));
                         if (!isNaN(amount) && amount > 0) {
                             if (user.balance < amount) {
-                                replyMsg = `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)`;
+                                replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)` };
                             } else {
                                 withdrawQueue.push({ userId: userId, amount: amount });
-                                replyMsg = `${mentionText} 🔔 แจ้งถอนเงินจำนวน ${amount} บาท สำเร็จ!\n⏳ อยู่ใน **คิวที่ ${withdrawQueue.length}** ของระบบ`;
+                                
+                                // 🌟 ปรับแต่งการตอบกลับแบบใหม่ (วิธีที่ 1): แท็กชื่อผู้ถอนกลางกลุ่ม ให้แอดมินจิ้มเข้าแชทส่วนตัวได้ทันที
+                                replyMessageObject = {
+                                    type: 'text',
+                                    text: `🔔 [คำขอถอนเงินใหม่]\n👤 @ผู้เล่น แทงสำเร็จ (${user.memberTitle})\n💰 จำนวนเงิน: ${amount} บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📌 แอดมินสามารถกดที่ชื่อแท็กสีฟ้าด้านบนเพื่อเปิดโปรไฟล์ และทักแชทส่วนตัวไปโอนเงินได้ทันทีครับ`,
+                                    mention: {
+                                        mentions: [
+                                            {
+                                                index: 19, // ตำแหน่งตัวอักษรเริ่มต้นของคำว่า @ผู้เล่น ในข้อความ text ด้านบน
+                                                length: 7, // ความยาวของข้อความแท็กที่จะแปลงเป็นสีฟ้า
+                                                userId: userId // แฟลชแท็กไปยังผู้เล่นคนนั้นโดยตรง
+                                            }
+                                        ]
+                                    }
+                                };
                             }
                         }
                     }
                 }
                 else if (originalMsg.startsWith('Y ') || originalMsg.startsWith('y ')) {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถอนุมัติรายการถอนเงินได้ครับ`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถอนุมัติรายการถอนเงินได้ครับ` };
                     } else {
                         let targetUserId = null;
                         if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
@@ -146,13 +172,13 @@ app.post('/callback', async (req, res) => {
                         }
                         let foundIndex = targetUserId ? withdrawQueue.findIndex(item => item.userId === targetUserId) : -1;
                         if (foundIndex === -1) {
-                            replyMsg = `👑 [แอดมิน] ❌ ไม่พบรายการแจ้งถอนค้าง หรือลืมกดแท็กชื่อผู้เล่น`;
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ ไม่พบรายการแจ้งถอนค้าง หรือลืมกดแท็กชื่อผู้เล่น` };
                         } else {
                             const targetItem = withdrawQueue[foundIndex];
                             const targetUser = usersWallets[targetItem.userId];
                             targetUser.balance -= targetItem.amount;
                             withdrawQueue.splice(foundIndex, 1);
-                            replyMsg = `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 ${targetUser.memberTitle} ถอนเงินสำเร็จ -${targetItem.amount} บาท`;
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 ${targetUser.memberTitle} ถอนเงินสำเร็จ -${targetItem.amount} บาท` };
                         }
                     }
                 }
@@ -160,9 +186,9 @@ app.post('/callback', async (req, res) => {
                     const qPos = getQueueIndex(userId);
                     let nameDisplay = user.name !== "ผู้เล่นทั่วไป" ? `(@${user.name})` : "";
                     if (qPos > 0) {
-                        replyMsg = `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (มีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท ในคิวที่ ${qPos})`;
+                        replyMessageObject = { type: 'text', text: `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (มีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท ในคิวที่ ${qPos})` };
                     } else {
-                        replyMsg = `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท`;
+                        replyMessageObject = { type: 'text', text: `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท` };
                     }
                 }
 
@@ -171,18 +197,18 @@ app.post('/callback', async (req, res) => {
                 // ==========================================
                 else if (userMsg === 'o') {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถเปิดรอบเดิมพันได้ครับ!`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถเปิดรอบเดิมพันได้ครับ!` };
                     } else {
                         isRoundOpen = true; roundBets = {}; pendingResults = null;
-                        replyMsg = "🟢 [ระบบ] แอดมินเปิดรับเดิมพันรอบใหม่แล้ว! ส่งโพยมาได้เลยครับ";
+                        replyMessageObject = { type: 'text', text: "🟢 [ระบบ] แอดมินเปิดรับเดิมพันรอบใหม่แล้ว! ส่งโพยมาได้เลยครับ" };
                     }
                 }
                 else if (userMsg === 'x') {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถสั่งปิดรอบได้ครับ!`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถสั่งปิดรอบได้ครับ!` };
                     } else {
                         if (!isRoundOpen) {
-                            replyMsg = "⚠️ รอบเดิมพันปิดอยู่แล้วครับ";
+                            replyMessageObject = { type: 'text', text: "⚠️ รอบเดิมพันปิดอยู่แล้วครับ" };
                         } else {
                             isRoundOpen = false;
                             let summary = "🔴 [ระบบ] แอดมินปิดรับเดิมพันรอบนี้แล้ว!\n📋 [สรุปยอดเดิมพันรวม]:\n";
@@ -193,22 +219,22 @@ app.post('/callback', async (req, res) => {
                                 hasData = true;
                             }
                             if (!hasData) summary += "❌ ไม่มีใครลงเดิมพันในรอบนี้\n";
-                            replyMsg = summary + `\n⏳ รอแอดมินสรุปผลไพ่ โดยพิมพ์ 'ผล: [ไพ่ขา1],[ไพ่ขา2]...,[ไพ่เจ้ามือ]'`;
+                            replyMessageObject = { type: 'text', text: summary + `\n⏳ รอแอดมินสรุปผลไพ่ โดยพิมพ์ 'ผล: [ไพ่ขา1],[ไพ่ขา2]...,[ไพ่เจ้ามือ]'` };
                         }
                     }
                 }
                 else if (userMsg === 'r') {
                     if (hasPendingWithdraw) {
-                        replyMsg = `${mentionText} ❌ คุณมีรายการแจ้งถอนเงินตกค้างอยู่ ไม่สามารถทำรายการได้`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณมีรายการแจ้งถอนเงินตกค้างอยู่ ไม่สามารถทำรายการได้` };
                     } else if (!isRoundOpen) {
-                        replyMsg = `${mentionText} ❌ ระบบปิดรอบไปแล้ว ไม่สามารถยกเลิกโพยได้ครับ`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ ระบบปิดรอบไปแล้ว ไม่สามารถยกเลิกโพยได้ครับ` };
                     } else if (!roundBets[userId]) {
-                        replyMsg = `${mentionText} ❌ คุณยังไม่มีโพยในรอบนี้ให้ยกเลิกครับ`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณยังไม่มีโพยในรอบนี้ให้ยกเลิกครับ` };
                     } else {
                         const savedBet = roundBets[userId];
                         user.balance += savedBet.holding; 
                         delete roundBets[userId]; 
-                        replyMsg = `${mentionText} 🔄 คืนโพยทั้งหมดในรอบนี้เรียบร้อยแล้วครับ!\n💰 ยอดเงินคงเหลือปัจจุบัน: ${user.balance} บาท`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} 🔄 คืนโพยทั้งหมดในรอบนี้เรียบร้อยแล้วครับ!\n💰 ยอดเงินคงเหลือปัจจุบัน: ${user.balance} บาท` };
                     }
                 }
 
@@ -229,9 +255,9 @@ app.post('/callback', async (req, res) => {
 
                     if (isBetMessage) {
                         if (hasPendingWithdraw) {
-                            replyMsg = `${mentionText} ❌ **ไม่สามารถลงโพยได้!** มีรายการแจ้งถอนค้างอยู่`;
+                            replyMessageObject = { type: 'text', text: `${mentionText} ❌ **ไม่สามารถลงโพยได้!** มีรายการแจ้งถอนค้างอยู่` };
                         } else if (!isRoundOpen) {
-                            replyMsg = `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!`;
+                            replyMessageObject = { type: 'text', text: `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!` };
                         } else {
                             let totalNewHolding = 0;
                             let newKhasList = []; 
@@ -322,15 +348,15 @@ app.post('/callback', async (req, res) => {
 
                             if (totalNewHolding > 0 && !hasErrorLeg) {
                                 if (user.balance < totalNewHolding) {
-                                    replyMsg = `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการค้ำเพิ่มอีก ${totalNewHolding} บ.)`;
+                                    replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการค้ำเพิ่มอีก ${totalNewHolding} บ.)` };
                                     currentBetData.khasDetails = backupKhasDetails; 
                                 } else {
                                     user.balance -= totalNewHolding;
-                                    replyMsg = `${mentionText} 🎯 [จดโพยชุดสำเร็จ]\n📥 โพยที่รับเพิ่มรอบนี้:\n  • ${newKhasList.join('\n  • ')}\n💰 ยอดเดิมพันรวมสะสมปัจจุบัน: ${currentBetData.totalBet} บ. (หักค้ำรวม: ${currentBetData.holding} บ.)\n💳 **ยอดเงินคงเหลือในกระเป๋าคุณ: ${user.balance} บาท**`;
+                                    replyMessageObject = { type: 'text', text: `${mentionText} 🎯 [จดโพยชุดสำเร็จ]\n📥 โพยที่รับเพิ่มรอบนี้:\n  • ${newKhasList.join('\n  • ')}\n💰 ยอดเดิมพันรวมสะสมปัจจุบัน: ${currentBetData.totalBet} บ. (หักค้ำรวม: ${currentBetData.holding} บ.)\n💳 **ยอดเงินคงเหลือในกระเป๋าคุณ: ${user.balance} บาท**` };
                                 }
                             } else {
                                 currentBetData.khasDetails = backupKhasDetails;
-                                replyMsg = `${mentionText} ❌ โพยไม่สำเร็จ! ตรวจพบรูปแบบผิดพลาด หรือระบุเลขขาเกินขอบเขต (ระบบรับเฉพาะเลขขาผู้เล่น 1 ถึง 6 เท่านั้นครับ)`;
+                                replyMessageObject = { type: 'text', text: `${mentionText} ❌ โพยไม่สำเร็จ! ตรวจพบรูปแบบผิดพลาด หรือระบุเลขขาเกินขอบเขต (ระบบรับเฉพาะเลขขาผู้เล่น 1 ถึง 6 เท่านั้นครับ)` };
                                 if (currentBetData.totalBet === 0) delete roundBets[userId];
                             }
                         }
@@ -342,7 +368,7 @@ app.post('/callback', async (req, res) => {
                 // ==========================================
                 if (originalMsg.startsWith('ผล:') || originalMsg.startsWith('ผล ')) {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ส่งผลครับ!`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ส่งผลครับ!` };
                     } else {
                         const resultStr = originalMsg.replace(/^ผล:\s*|^ผล\s+/i, '');
                         const results = resultStr.split(','); 
@@ -370,19 +396,19 @@ app.post('/callback', async (req, res) => {
                                 previewText += `🔹 ขา ${i} [${playerResult.score} แต้ม]: ${status}\n`;
                             }
 
-                            replyMsg = previewText + `\n📢 แอดมินกรุณาตรวจสอบผลไพ่ด้านบน:\n👍 หากถูกต้องพิมพ์: **OK**\n👎 หากต้องการส่งใหม่พิมพ์: **NO**`;
+                            replyMessageObject = { type: 'text', text: previewText + `\n📢 แอดมินกรุณาตรวจสอบผลไพ่ด้านบน:\n👍 หากถูกต้องพิมพ์: **OK**\n👎 หากต้องการส่งใหม่พิมพ์: **NO**` };
                         }
                     }
                 }
 
                 // ==========================================
-                // PART 5: ระบบคำนวณเงินสิ้นสุดรอบ + กางรายละเอียดรายขาถูกต้อง 100%
+                // PART 5: ระบบคำนวณเงินสิ้นสุดรอบ + แจกแจงรายขาชัดเจน
                 // ==========================================
                 else if (userMsg === 'ok') {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์กดคอนเฟิร์มผลครับ!`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์กดคอนเฟิร์มผลครับ!` };
                     } else if (!pendingResults) {
-                        replyMsg = `👑 [แอดมิน] ⚠️ ไม่มีผลไพ่ค้างคาในระบบให้คอนเฟิร์มครับ`;
+                        replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ⚠️ ไม่มีผลไพ่ค้างคาในระบบให้คอนเฟิร์มครับ` };
                     } else {
                         let { dealerResult, results } = pendingResults;
                         let summaryText = `📊 [สรุปผลคิดเงินป๊อกเด้ง - จบรอบ]\n👑 เจ้ามือได้: ${dealerResult.score} แต้ม (${dealerResult.deng} เด้ง)\n------------------------\n`;
@@ -407,7 +433,6 @@ app.post('/callback', async (req, res) => {
                                 let legLabel = ""; 
 
                                 if (!isDealerSide) {
-                                    // 🔹 ฝั่งผู้เล่นทั่วไป (เดี่ยว / มข)
                                     legLabel = khaData.type === 'มข' ? `มข ขา ${khaNum}` : `ขา ${khaNum}`;
                                     if (playerResult.score > dealerResult.score) {
                                         let winAmount = bet * playerResult.deng;
@@ -422,7 +447,6 @@ app.post('/callback', async (req, res) => {
                                         userTotalReturn += singleHolding;
                                     }
                                 } else {
-                                    // 🔸 ฝั่งเจ้ามือ (จ / มจ) - แก้ไขการคืนเงินค้ำและหักค่าน้ำถูกต้อง
                                     legLabel = khaData.type === 'มจ' ? `มจ (เจ้าสู้ขา ${khaNum})` : `จ${khaNum} (เจ้าสู้ขา ${khaNum})`;
                                     if (dealerResult.score > playerResult.score) {
                                         let grossProfit = bet * dealerResult.deng;
@@ -452,24 +476,25 @@ app.post('/callback', async (req, res) => {
                             summaryText += `👤 ${pUser.memberTitle}${displayName}:\n${legDetailsText}   🏆 ผลรวมรอบนี้: **${winLossSign} บาท**\n   💳 ยอดเงินคงเหลือล่าสุด: ${pUser.balance} บาท\n------------------------\n`;
                         }
 
-                        replyMsg = summaryText + `✨ เคลียร์ยอดระบบเรียบร้อย พิมพ์ O เพื่อเริ่มรอบใหม่ครับ`;
+                        replyMessageObject = { type: 'text', text: summaryText + `✨ เคลียร์ยอดระบบเรียบร้อย พิมพ์ O เพื่อเริ่มรอบใหม่ครับ` };
                         roundBets = {}; 
                         pendingResults = null; 
                     }
                 }
                 else if (userMsg === 'no') {
                     if (!isAdmin) {
-                        replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งนี้ครับ`;
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งนี้ครับ` };
                     } else if (!pendingResults) {
-                        replyMsg = `👑 [แอดมิน] ⚠️ ไม่มีผลไพ่ค้างในระบบให้ยกเลิกครับ`;
+                        replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ⚠️ ไม่มีผลไพ่ค้างในระบบให้ยกเลิกครับ` };
                     } else {
                         pendingResults = null; 
-                        replyMsg = `👑 [แอดมิน] 🛑 ยกเลิกผลไพ่เรียบร้อยแล้วครับ แอดมินสามารถส่งผลไพ่ใหม่คีย์เวิร์ดเดิมได้ทันทีเลยครับ`;
+                        replyMessageObject = { type: 'text', text: `👑 [แอดมิน] 🛑 ยกเลิกผลไพ่เรียบร้อยแล้วครับ แอดมินสามารถส่งผลไพ่ใหม่คีย์เวิร์ดเดิมได้ทันทีเลยครับ` };
                     }
                 }
             }
 
-            if (replyMsg) {
+            // จัดส่งก้อนข้อความกลับไปยัง LINE Server
+            if (replyMessageObject) {
                 try {
                     await fetch('https://api.line.me/v2/bot/message/reply', {
                         method: 'POST',
@@ -479,7 +504,7 @@ app.post('/callback', async (req, res) => {
                         },
                         body: JSON.stringify({
                             replyToken: replyToken,
-                            messages: [{ type: 'text', text: replyMsg }]
+                            messages: [replyMessageObject]
                         })
                     });
                 } catch (err) {
