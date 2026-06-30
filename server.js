@@ -9,7 +9,7 @@ let isRoundOpen = false;
 let roundBets = {}; 
 let withdrawQueue = []; 
 
-// ✨ ตัวแปรระบบสำหรับพักข้อมูลผลไพ่เพื่อรอแอดมินคอนเฟิร์ม
+// ตัวแปรระบบสำหรับพักข้อมูลผลไพ่เพื่อรอแอดมินคอนเฟิร์ม
 let pendingResults = null; 
 
 // 👑 [ตั้งค่าแอดมิน] ใส่ LINE USER ID ของแอดมินตรงนี้ครับ
@@ -167,7 +167,7 @@ app.post('/callback', async (req, res) => {
                 }
 
                 // ==========================================
-                // PART 2: ระบบเปิดรอบ (O) / ปิดรอบ (X) -> สรุปสั้น
+                // PART 2: ระบบเปิดรอบ (O) / ปิดรอบ (X)
                 // ==========================================
                 else if (userMsg === 'o') {
                     if (!isAdmin) {
@@ -185,7 +185,6 @@ app.post('/callback', async (req, res) => {
                             replyMsg = "⚠️ รอบเดิมพันปิดอยู่แล้วครับ";
                         } else {
                             isRoundOpen = false;
-                            // ✨ [อัปเดตตามสั่ง]: สรุปผลหลังปิดรอบสั้นๆ ว่าใครแทงรวมเท่าไหร่ ไม่บอกรายละเอียดขา
                             let summary = "🔴 [ระบบ] แอดมินปิดรับเดิมพันรอบนี้แล้ว!\n📋 [สรุปยอดเดิมพันรวม]:\n";
                             let hasData = false;
                             for (let uid in roundBets) {
@@ -206,57 +205,125 @@ app.post('/callback', async (req, res) => {
                     } else if (!roundBets[userId]) {
                         replyMsg = `${mentionText} ❌ คุณยังไม่มีโพยในรอบนี้ให้ยกเลิกครับ`;
                     } else {
+                        // คืนเงินค้ำประกันทั้งหมดที่เคยลงไว้ในรอบนี้กลับกระเป๋าผู้เล่น
                         const savedBet = roundBets[userId];
-                        user.balance += savedBet.holding; delete roundBets[userId]; 
-                        replyMsg = `${mentionText} 🔄 คืนโพยเรียบร้อยแล้วครับ!\n💰 ยอดเงินคงเหลือปัจจุบัน: ${user.balance} บาท`;
+                        user.balance += savedBet.holding; 
+                        delete roundBets[userId]; 
+                        replyMsg = `${mentionText} 🔄 คืนโพยทั้งหมดในรอบนี้เรียบร้อยแล้วครับ!\n💰 ยอดเงินคงเหลือปัจจุบัน: ${user.balance} บาท`;
                     }
                 }
 
                 // ==========================================
-                // PART 3: ระบบส่งโพยแทงของผู้เล่น
+                // PART 3: ระบบรับโพยแบบชุด (Multi-line) และสะสมยอด
                 // ==========================================
-                else if (userMsg.startsWith('มข-') || userMsg.startsWith('มจ-') || userMsg.startsWith('จ') || (userMsg.includes('-') && !userMsg.startsWith('ผล:'))) {
-                    if (hasPendingWithdraw) {
-                        replyMsg = `${mentionText} ❌ **ไม่สามารถลงโพยได้!** มีรายการแจ้งถอนค้างอยู่`;
-                    } 
-                    else if (!isRoundOpen) {
-                        replyMsg = `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!`;
-                    } 
-                    else {
-                        let betType = "", khas = [], betPerKha = 0, totalBet = 0, holding = 0;
+                else {
+                    // ตรวจสอบว่าข้อความเข้าข่ายการส่งโพยเดิมพันหรือไม่
+                    const lines = originalMsg.split('\n');
+                    let isBetMessage = false;
+                    
+                    // เช็กโครงสร้างเบื้องต้นว่ามีบรรทัดไหนเป็นโพยแทงหรือไม่
+                    for (let line of lines) {
+                        let cleanLine = line.toLowerCase().replace(/\s+/g, '');
+                        if (cleanLine.startsWith('มข-') || cleanLine.startsWith('มจ-') || cleanLine.startsWith('จ') || (cleanLine.includes('-') && !cleanLine.startsWith('ผล:'))) {
+                            isBetMessage = true;
+                            break;
+                        }
+                    }
 
-                        if (userMsg.startsWith('มข-')) {
-                            betPerKha = parseInt(userMsg.replace('มข-', ''));
-                            if (!isNaN(betPerKha)) { betType = "มข"; khas = [1,2,3,4,5,6,7]; totalBet = betPerKha * 7; holding = totalBet * 2; }
-                        }
-                        else if (userMsg.startsWith('มจ-')) {
-                            betPerKha = parseInt(userMsg.replace('มจ-', ''));
-                            if (!isNaN(betPerKha)) { betType = "มจ"; khas = [1,2,3,4,5,6,7]; totalBet = betPerKha * 7; holding = totalBet * 2; }
-                        }
-                        else if (userMsg.startsWith('จ')) {
-                            const parts = userMsg.substring(1).split('-');
-                            if (parts.length === 2) {
-                                khas = parts[0].split('').map(Number); betPerKha = parseInt(parts[1]);
-                                betType = "จ"; totalBet = betPerKha * khas.length; holding = totalBet * 2;
-                            }
-                        }
-                        else if (userMsg.includes('-')) {
-                            const parts = userMsg.split('-');
-                            if (parts.length === 2 && !isNaN(parts[0])) {
-                                khas = parts[0].split('').map(Number); betPerKha = parseInt(parts[1]);
-                                betType = "เดี่ยว"; totalBet = betPerKha * khas.length; holding = totalBet * 2;
-                            }
-                        }
+                    if (isBetMessage) {
+                        if (hasPendingWithdraw) {
+                            replyMsg = `${mentionText} ❌ **ไม่สามารถลงโพยได้!** มีรายการแจ้งถอนค้างอยู่`;
+                        } else if (!isRoundOpen) {
+                            replyMsg = `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!`;
+                        } else {
+                            let totalNewHolding = 0;
+                            let newKhasList = []; // เก็บประวัติโพยที่แทงผ่านในรอบนี้
 
-                        if (holding > 0) {
-                            if (roundBets[userId]) user.balance += roundBets[userId].holding;
-                            if (user.balance < holding) {
-                                replyMsg = `${mentionText} ❌ แทงไม่ได้ครับ! ยอดเงินคงเหลือไม่พอค่าค้ำประกัน (${holding} บ.)`;
-                                if (roundBets[userId]) user.balance -= roundBets[userId].holding; 
+                            // เตรียมโครงสร้างข้อมูลรองรับการแทงสะสม
+                            if (!roundBets[userId]) {
+                                roundBets[userId] = { 
+                                    totalBet: 0, 
+                                    holding: 0, 
+                                    khasDetails: {} // โครงสร้างย่อยเก็บแยกรายขาเพื่อเช็กการแทงซ้ำ { '1': betAmount, '2': betAmount }
+                                };
+                            }
+
+                            let currentBetData = roundBets[userId];
+
+                            // วนลูปตรวจสลีปและประมวลผลโพยทีละบรรทัด
+                            for (let line of lines) {
+                                let cleanLine = line.toLowerCase().replace(/\s+/g, '');
+                                if (!cleanLine) continue;
+
+                                let betType = "", khas = [], betPerKha = 0, lineTotalBet = 0, lineHolding = 0;
+
+                                if (cleanLine.startsWith('มข-')) {
+                                    betPerKha = parseInt(cleanLine.replace('มข-', ''));
+                                    if (!isNaN(betPerKha) && betPerKha > 0) { betType = "มข"; khas = [1,2,3,4,5,6,7]; }
+                                }
+                                else if (cleanLine.startsWith('มจ-')) {
+                                    betPerKha = parseInt(cleanLine.replace('มจ-', ''));
+                                    if (!isNaN(betPerKha) && betPerKha > 0) { betType = "มจ"; khas = [1,2,3,4,5,6,7]; }
+                                }
+                                else if (cleanLine.startsWith('จ')) {
+                                    const parts = cleanLine.substring(1).split('-');
+                                    if (parts.length === 2) {
+                                        let rawKhas = parts[0].split('').map(Number);
+                                        // ✨ กรองเอาเฉพาะเลขขา 1-7 เท่านั้น
+                                        khas = rawKhas.filter(k => k >= 1 && k <= 7);
+                                        betPerKha = parseInt(parts[1]);
+                                    }
+                                }
+                                else if (cleanLine.includes('-')) {
+                                    const parts = cleanLine.split('-');
+                                    if (parts.length === 2 && !isNaN(parts[0])) {
+                                        let rawKhas = parts[0].split('').map(Number);
+                                        // ✨ กรองเอาเฉพาะเลขขา 1-7 เท่านั้น
+                                        khas = rawKhas.filter(k => k >= 1 && k <= 7);
+                                        betPerKha = parseInt(parts[1]);
+                                    }
+                                }
+
+                                // หากโพยบรรทัดนี้ถูกต้องและมีขาที่เล่นได้จริง
+                                if (khas.length > 0 && !isNaN(betPerKha) && betPerKha > 0) {
+                                    khas.forEach(k => {
+                                        // สะสมยอดลงรายขาเดิม หรือสร้างยอดใหม่ถ้ายังไม่มี
+                                        if (!currentBetData.khasDetails[k]) {
+                                            currentBetData.khasDetails[k] = { type: betType || 'เดี่ยว', bet: 0 };
+                                        }
+                                        currentBetData.khasDetails[k].bet += betPerKha;
+                                        if (betType) currentBetData.khasDetails[k].type = betType; // อัปเดตประเภทถ้าเป็นโพยเหมา
+                                        
+                                        lineTotalBet += betPerKha;
+                                        lineHolding += (betPerKha * 2);
+                                    });
+
+                                    totalNewNewHolding += lineHolding;
+                                    currentBetData.totalBet += lineTotalBet;
+                                    currentBetData.holding += lineHolding;
+                                    
+                                    let txtKhas = khas.join('');
+                                    newKhasList.push(`${betType || ''}${txtKhas}-${betPerKha}`);
+                                }
+                            }
+
+                            // ตรวจสอบกระเป๋าเงินผู้เล่นเทียบกับเงินค้ำประกันชุดใหม่ที่เพิ่มเข้ามา
+                            if (totalNewHolding > 0) {
+                                if (user.balance < totalNewHolding) {
+                                    // หากเงินไม่พอ ให้โรลแบ็ค (Rollback) คืนค่าเดิมก่อนบวกโพยชุดนี้
+                                    // เพื่อความง่าย ล้างรายการคำนวณของชุดนี้ออกทั้งหมดโดยสั่งลบออกคืนระบบค้ำประกันเก่า
+                                    replyMsg = `${mentionText} ❌ ไม่สามารถเพิ่มโพยได้! ยอดเงินคงเหลือไม่พอค่าค้ำประกันเพิ่ม (ต้องการเพิ่มอีก ${totalNewHolding} บ.)`;
+                                    
+                                    // คืนค่าโครงสร้างระบบ (รีเซ็ตรอบเดิมพันของผู้เล่นคนนี้ เพื่อป้องกันข้อมูลเพี้ยน)
+                                    delete roundBets[userId];
+                                    replyMsg += `\n⚠️ ระบบได้ทำการล้างโพยเก่าของรอบนี้ออกเพื่อความปลอดภัย โปรดเติมเงินหรือส่งโพยใหม่ขอบเขตเงินที่พอครับ`;
+                                } else {
+                                    user.balance -= totalNewHolding;
+                                    replyMsg = `${mentionText} 🎯 [จดโพยชุดสำเร็จ]\n📥 โพยที่รับเพิ่มรอบนี้: ${newKhasList.join(', ')}\n💰 ยอดเดิมพันรวมสะสมปัจจุบัน: ${currentBetData.totalBet} บ. (หักค้ำรวม: ${currentBetData.holding} บ.)`;
+                                }
                             } else {
-                                user.balance -= holding; 
-                                roundBets[userId] = { type: betType, khas: khas, betPerKha: betPerKha, totalBet: totalBet, holding: holding };
-                                replyMsg = `${mentionText} 🎯 [จดโพยสำเร็จ] แทงรวม: ${totalBet} บ. (หักค้ำ ${holding} บ.)`;
+                                replyMsg = `${mentionText} ❌ รูปแบบโพยไม่ถูกต้อง หรือระบุเลขขาเกินขอบเขต (รับเฉพาะขา 1-7 เท่านั้นครับ)`;
+                                if (currentBetData.totalBet === 0) delete roundBets[userId];
                             }
                         }
                     }
@@ -265,7 +332,7 @@ app.post('/callback', async (req, res) => {
                 // ==========================================
                 // PART 4: ระบบรับผลรอบแรก (จับแต้ม/โชว์สถานะขา) -> ยังไม่ตัดยอดเงิน
                 // ==========================================
-                else if (originalMsg.startsWith('ผล:') || originalMsg.startsWith('ผล ')) {
+                if (originalMsg.startsWith('ผล:') || originalMsg.startsWith('ผล ')) {
                     if (!isAdmin) {
                         replyMsg = `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ส่งผลครับ!`;
                     } else {
@@ -276,12 +343,10 @@ app.post('/callback', async (req, res) => {
                             let dealerRaw = results[results.length - 1];
                             let dealerResult = parseCard(dealerRaw);
                             
-                            // ✨ เก็บผลไพ่ดิบลงตัวแปรชั่วคราวเพื่อรอยืนยัน
                             pendingResults = { dealerResult, results };
 
                             let previewText = `🃏 [ตรวจสอบผลไพ่ประจำรอบ]\n👑 เจ้ามือ: ${dealerResult.score} แต้ม (${dealerResult.deng} เด้ง)\n------------------------\n`;
                             
-                            // ลูปโชว์สถานะแต้มและผลลัพธ์ของแต่ละขา (1-7) เทียบกับเจ้ามือให้แอดมินตรวจ
                             for (let i = 1; i <= results.length - 1; i++) {
                                 let pRaw = results[i - 1];
                                 let playerResult = parseCard(pRaw);
@@ -292,7 +357,6 @@ app.post('/callback', async (req, res) => {
                                 } else if (playerResult.score < dealerResult.score) {
                                     status = `❌ แพ้เจ้า (เจ้ากิน ${dealerResult.deng} เด้ง)`;
                                 } else {
-                                    // ✨ [แก้ไขกติกา]: แต้มเท่ากัน = เสมอกัน 100% ไม่มีได้เสียเด้ง
                                     status = `🤝 เสมอเจ้า (แต้มเท่าเจ๊า)`;
                                 }
                                 previewText += `🔹 ขา ${i} [${playerResult.score} แต้ม]: ${status}\n`;
@@ -315,33 +379,34 @@ app.post('/callback', async (req, res) => {
                         let { dealerResult, results } = pendingResults;
                         let summaryText = `📊 [สรุปผลคิดเงินป๊อกเด้ง - จบรอบ]\n👑 เจ้ามือได้: ${dealerResult.score} แต้ม (${dealerResult.deng} เด้ง)\n------------------------\n`;
                         
-                        // คำนวณเงินจริงของสมาชิกแต่ละคน
                         for (let uid in roundBets) {
                             let savedBet = roundBets[uid];
                             let pUser = usersWallets[uid];
-                            let userTotalReturn = 0; // เงินค้ำ+กำไร ที่จะคืนเข้ากระเป๋า
-                            let totalWinLoss = 0;   // ยอด สุทธิสุทธิที่ + หรือ - ในรอบนี้
+                            let userTotalReturn = 0; 
+                            let totalWinLoss = 0;   
 
-                            savedBet.khas.forEach(khaNum => {
-                                let pRaw = results[khaNum - 1];
+                            // วนลูปคิดเงินจากโครงสร้างรายขาที่บันทึกสะสมไว้ทั้งหมด
+                            for (let khaNum in savedBet.khasDetails) {
+                                let khaData = savedBet.khasDetails[khaNum];
+                                let pRaw = results[parseInt(khaNum) - 1];
+                                if (!pRaw) continue; 
+                                
                                 let playerResult = parseCard(pRaw);
-                                let bet = savedBet.betPerKha;
-                                let isDealerSide = (savedBet.type === 'มจ' || savedBet.type === 'จ');
+                                let bet = khaData.bet;
+                                let isDealerSide = (khaData.type === 'มจ' || khaData.type === 'จ');
 
                                 let singleHolding = bet * 2; 
                                 let winLoss = 0;
 
-                                // แต้มผู้เล่นชนะ
                                 if (playerResult.score > dealerResult.score) {
                                     let winAmount = bet * playerResult.deng;
                                     winLoss = isDealerSide ? (-winAmount) : winAmount;
                                     userTotalReturn += isDealerSide ? 0 : (singleHolding + winAmount);
                                 } 
-                                // แต้มเจ้ามือชนะ
                                 else if (playerResult.score < dealerResult.score) {
                                     let loseAmount = bet * dealerResult.deng;
                                     if (isDealerSide) {
-                                        let profit = loseAmount * 0.9; // หักน้ำ 10%
+                                        let profit = loseAmount * 0.9; 
                                         winLoss = profit;
                                         userTotalReturn += (singleHolding + profit);
                                     } else {
@@ -349,29 +414,25 @@ app.post('/callback', async (req, res) => {
                                         userTotalReturn += (singleHolding - loseAmount);
                                     }
                                 } 
-                                // ✨ [แก้ไขกติกา]: แต้มเท่ากันคือเสมอ 100% ไม่มีได้เสียเด้ง คืนยอดค้ำประกันเต็มจำนวน
                                 else {
                                     winLoss = 0; 
                                     userTotalReturn += singleHolding; 
                                 }
 
                                 totalWinLoss += winLoss;
-                            });
+                            }
 
-                            // อัปเดตเงินในกระเป๋าผู้เล่น
                             pUser.balance += userTotalReturn;
                             
-                            // จัดรูปแบบข้อความแสดงผลแพ้ชนะสุทธิ
                             let winLossSign = totalWinLoss > 0 ? `+${totalWinLoss}` : (totalWinLoss === 0 ? `เสมอ (0)` : `${totalWinLoss}`);
                             let displayName = pUser.name !== "ผู้เล่นทั่วไป" ? ` (@${pUser.name})` : "";
                             
-                            // ✨ [อัปเดตตามสั่ง]: แสดงสั้นๆ แค่ว่าสมาชิกไหน ได้หรือเสียเท่าไหร่ ไม่บอกประวัติขาแยก
                             summaryText += `👤 ${pUser.memberTitle}${displayName}: **${winLossSign} บาท**\n`;
                         }
 
                         replyMsg = summaryText + `\n✨ เคลียร์ยอดระบบเรียบร้อย พิมพ์ O เพื่อเริ่มรอบใหม่ครับ`;
                         roundBets = {}; 
-                        pendingResults = null; // เคลียร์ผลพัก
+                        pendingResults = null; 
                     }
                 }
                 else if (userMsg === 'no') {
@@ -380,7 +441,7 @@ app.post('/callback', async (req, res) => {
                     } else if (!pendingResults) {
                         replyMsg = `👑 [แอดมิน] ⚠️ ไม่มีผลไพ่ค้างในระบบให้ยกเลิกครับ`;
                     } else {
-                        pendingResults = null; // ล้างผลพักทิ้ง
+                        pendingResults = null; 
                         replyMsg = `👑 [แอดมิน] 🛑 ยกเลิกผลไพ่เรียบร้อยแล้วครับ แอดมินสามารถส่งผลไพ่ใหม่คีย์เวิร์ดเดิมได้ทันทีเลยครับ`;
                     }
                 }
