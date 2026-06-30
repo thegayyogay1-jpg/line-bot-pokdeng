@@ -182,11 +182,9 @@ app.post('/callback', async (req, res) => {
             }
             else if (userMsg === 'c') {
                 const qPos = getQueueIndex(userId);
-                if (qPos > 0) {
-                    replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (คุณมีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท อยู่ในคิวที่ ${qPos})`;
-                } else {
-                    replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท`;
-                }
+                // ⚙️ แก้ไขตรงนี้ชั่วคราวเพื่อให้บอทส่งไอดีกลับมาให้เราคัดลอกครับ
+                replyMsg = `${mentionText}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n🆔 ID ของคุณคือ: ${userId}`;
+            }
             }
 
             // ==========================================
