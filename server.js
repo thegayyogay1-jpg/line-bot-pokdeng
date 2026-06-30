@@ -368,8 +368,8 @@ app.post('/callback', async (req, res) => {
                     }
                 }
 
-                // ==========================================
-                // PART 5: ระบบคำนวณเงินสิ้นสุดรอบ (แก้ไข Logic ฝั่งเจ้ามือ + หักน้ำ 10% ถูกต้อง)
+               // ==========================================
+                // PART 5: ระบบคำนวณเงินสิ้นสุดรอบ + แจกแจงรายละเอียดรายขา
                 // ==========================================
                 else if (userMsg === 'ok') {
                     if (!isAdmin) {
@@ -385,7 +385,9 @@ app.post('/callback', async (req, res) => {
                             let pUser = usersWallets[uid];
                             let userTotalReturn = 0; 
                             let totalWinLoss = 0;   
+                            let legDetailsText = ""; // ตัวแปรสำหรับเก็บข้อความแจกแจงรายขา
 
+                            // วนลูปคิดเงินและดึงรายละเอียดรายขาออกมาโชว์
                             for (let khaNum in savedBet.khasDetails) {
                                 let khaData = savedBet.khasDetails[khaNum];
                                 let pRaw = results[parseInt(khaNum) - 1];
@@ -394,32 +396,65 @@ app.post('/callback', async (req, res) => {
                                 let playerResult = parseCard(pRaw);
                                 let bet = khaData.bet;
                                 let isDealerSide = (khaData.type === 'มจ' || khaData.type === 'จ');
+                                let singleHolding = bet * 2; 
+                                let winLoss = 0;
+                                let legLabel = ""; // ข้อความกำกับหน้าขา เช่น [เดี่ยว], [มจ], [จ]
 
-                                // 📦 ให้ก๊อปปี้ท่อนนี้ไปวางแทนที่เงื่อนไขคิดแต้มไพ่เดิมได้เลยครับ
+                                if (!isDealerSide) {
+                                    // 🔹 ฝั่งผู้เล่น (เดี่ยว / มข)
+                                    legLabel = khaData.type === 'มข' ? `มข ขา ${khaNum}` : `ขา ${khaNum}`;
+                                    if (playerResult.score > dealerResult.score) {
+                                        let winAmount = bet * playerResult.deng;
+                                        winLoss = winAmount;
+                                        userTotalReturn += (singleHolding + winAmount); 
+                                    } else if (playerResult.score < dealerResult.score) {
+                                        let loseAmount = bet * dealerResult.deng;
+                                        winLoss = -loseAmount;
+                                        userTotalReturn += (singleHolding - loseAmount); 
+                                    } else {
+                                        winLoss = 0;
+                                        userTotalReturn += singleHolding;
+                                    }
+                                } else {
+                                    // 🔸 ฝั่งเจ้ามือ (จ / มจ)
+                                    legLabel = khaData.type === 'มจ' ? `มจ (เจ้าสู้ขา ${khaNum})` : `จ${khaNum} (เจ้าสู้ขา ${khaNum})`;
+                                    if (dealerResult.score > playerResult.score) {
+                                        let grossProfit = bet * dealerResult.deng;
+                                        let netProfit = grossProfit * 0.90; // หักน้ำ 10%
+                                        winLoss = netProfit;
+                                        userTotalReturn += (singleHolding + netProfit); 
+                                    } else if (dealerResult.score < playerResult.score) {
+                                        let loseAmount = bet * playerResult.deng;
+                                        winLoss = -loseAmount;
+                                        userTotalReturn += (singleHolding - loseAmount);
+                                    } else {
+                                        winLoss = 0;
+                                        userTotalReturn += singleHolding;
+                                    }
+                                }
 
-let singleHolding = bet * 2; // เงินค้ำประกันที่โดนหักไปตอนแรก (เช่น แทง 50 ค้ำ 100)
-let winLoss = 0;
+                                totalWinLoss += winLoss;
+                                
+                                // สร้างบรรทัดแจกแจงรายขา
+                                let legSign = winLoss > 0 ? `+${winLoss.toFixed(0)}` : (winLoss === 0 ? `เสมอ` : `${winLoss.toFixed(0)}`);
+                                legDetailsText += `   ▪️ ${legLabel}: ${legSign} บ.\n`;
+                            }
 
-if (!isDealerSide) {
-    // ==========================================
-    // [1] กรณีผู้เล่นแทงฝั่งผู้เล่นทั่วไป (เดี่ยว / มข)
-    // ==========================================
-    if (playerResult.score > dealerResult.score) {
-        // ผู้เล่นชนะเจ้ามือ
-        let winAmount = bet * playerResult.deng;
-        winLoss = winAmount;
-        userTotalReturn += (singleHolding + winAmount); 
-    } else if (playerResult.score < dealerResult.score) {
-        // ผู้เล่นแพ้เจ้ามือ
-        let loseAmount = bet * dealerResult.deng;
-        winLoss = -loseAmount;
-        userTotalReturn += (singleHolding - loseAmount); 
-    } else {
-        // เสมอ
-        winLoss = 0;
-        userTotalReturn += singleHolding;
-    }
-} else {
+                            // อัปเดตเงินในกระเป๋าผู้เล่น
+                            pUser.balance += userTotalReturn;
+                            
+                            let winLossSign = totalWinLoss > 0 ? `+${totalWinLoss.toFixed(0)}` : (totalWinLoss === 0 ? `เสมอ (0)` : `${totalWinLoss.toFixed(0)}`);
+                            let displayName = pUser.name !== "ผู้เล่นทั่วไป" ? ` (@${pUser.name})` : "";
+                            
+                            // ประกอบข้อความ: ชื่อผู้เล่น -> รายละเอียดแต่ละขา -> สรุปรวมท้ายชื่อ
+                            summaryText += `👤 ${pUser.memberTitle}${displayName}:\n${legDetailsText}   🏆 ผลรวมรอบนี้: **${winLossSign} บาท**\n   💳 ยอดเงินคงเหลือล่าสุด: ${pUser.balance} บาท\n------------------------\n`;
+                        }
+
+                        replyMsg = summaryText + `✨ เคลียร์ยอดระบบเรียบร้อย พิมพ์ O เพื่อเริ่มรอบใหม่ครับ`;
+                        roundBets = {}; 
+                        pendingResults = null; 
+                    }
+                }
     // ==========================================
     // [2] กรณีผู้เล่นแทงฝั่งเจ้ามือ (จ / มจ) <-- จุดที่แก้ไข
     // ==========================================
