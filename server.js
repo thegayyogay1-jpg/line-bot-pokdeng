@@ -153,29 +153,43 @@ app.post('/callback', async (req, res) => {
                         }
                     }
                 }
+                // ==========================================
+                // [แก้ไขเสร็จสมบูรณ์] คำสั่งแอดมินอนุมัติถอนเงิน พิมพ์แค่ Y [เลขสมาชิก]
+                // รูปแบบคำสั่ง: Y 1  (ไม่ต้องใส่จำนวนเงินซ้ำ บอทจะดึงยอดที่ผู้เล่นแจ้งไว้มาตัดออกเอง)
+                // ==========================================
                 else if (originalMsg.startsWith('Y ') || originalMsg.startsWith('y ')) {
                     if (!isAdmin) {
                         replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณไม่ใช่แอดมิน ไม่สามารถอนุมัติรายการถอนเงินได้ครับ` };
                     } else {
+                        // แยกข้อความเพื่อเอาเลขสมาชิก เช่น พิมพ์ "Y 1" จะได้ memberNum = 1
+                        const parts = originalMsg.trim().split(/\s+/);
+                        let memberNum = parts[1] ? parseInt(parts[1]) : 0;
+
                         let targetUserId = null;
-                        if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
-                            targetUserId = event.message.mention.mentions[0].userId;
+
+                        // ค้นหาลูกค้าจากเลขสมาชิก
+                        if (memberNum > 0 && !isNaN(memberNum)) {
+                            for (let uid in usersWallets) {
+                                if (usersWallets[uid].memberNumber === memberNum) {
+                                    targetUserId = uid;
+                                    break;
+                                }
+                            }
                         }
 
-                        const moneyMatch = originalMsg.match(/\d+$/);
-                        let amount = moneyMatch ? parseInt(moneyMatch[0]) : 0;
-
                         if (!targetUserId) {
-                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ อนุมัติไม่สำเร็จ: ลืมกดแท็ก @ชื่อผู้เล่น หรือผู้เล่นยังไม่มีชื่อในระบบกลุ่ม` };
-                        } else if (amount <= 0 || isNaN(amount)) {
-                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ อนุมัติไม่สำเร็จ: กรุณาระบุจำนวนเงินท้ายคำสั่งด้วยครับ (เช่น Y @ชื่อผู้เล่น 1000)` };
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ อนุมัติไม่สำเร็จ: ไม่พบเลขสมาชิกนี้ในระบบ\n📌 วิธีใช้: **Y [เลขสมาชิก]** (เช่น Y 1)` };
                         } else {
                             const targetUser = usersWallets[targetUserId];
                             
-                            if (targetUser.balance < amount) {
-                                replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ⚠️ เตือน: เงินในระบบของ สมาชิกที่ ${targetUser.memberNumber} มีไม่พอตัดยอด (มีอยู่ ${targetUser.balance} บ. แต่จะตัดออก ${amount} บ.)` };
+                            // 🛡️ ตรวจสอบว่าลูกค้าคนนี้ได้พิมพ์แจ้งถอนค้างไว้จริงไหม
+                            if (!targetUser.isLockWithdraw || targetUser.pendingWithdrawAmount <= 0) {
+                                replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ สมาชิกที่ ${targetUser.memberNumber} ไม่ได้มีรายการแจ้งถอนค้างอยู่ในระบบครับ (กระเป๋าไม่ได้ถูกล็อก)` };
                             } else {
-                                // 💸 หักเงินจริง + 🔓 ปลดล็อกกระเป๋าให้กลับมาเล่นรอบต่อไปได้
+                                // ดึงยอดเงินที่บอทจำไว้ตอนผู้เล่นพิมพ์ถอน มาใช้ตัดเงินจริง
+                                let amount = targetUser.pendingWithdrawAmount;
+                                
+                                // 💸 หักเงินออกจากระบบ + 🔓 ปลดล็อกกระเป๋าให้กลับมาเดิมพันได้ปกติ
                                 targetUser.balance -= amount;
                                 targetUser.isLockWithdraw = false;
                                 targetUser.pendingWithdrawAmount = 0;
@@ -183,7 +197,7 @@ app.post('/callback', async (req, res) => {
                                 let nameDisplay = targetUser.name !== "ผู้เล่นทั่วไป" ? ` (@${targetUser.name})` : "";
                                 replyMessageObject = { 
                                     type: 'text', 
-                                    text: `👑 [แอดมิน] ✅ อนุมัติการถอนเงินและตัดยอดในระบบเรียบร้อย!\n👤 ${targetUser.memberTitle}${nameDisplay}\n📉 หักเงินสำเร็จ: -${amount} บาท\n🔓 ปลดล็อกกระเป๋าเรียบร้อย\n💰 ยอดเงินคงเหลือในบอทล่าสุด: ${targetUser.balance} บาท` 
+                                    text: `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 สมาชิกที่ ${targetUser.memberNumber}${nameDisplay}\n📉 หักยอดเงินออก: -${amount} บาท\n🔓 ปลดล็อกกระเป๋าให้กลับมาเดิมพันและแจ้งถอนรอบใหม่ได้แล้วครับ\n💰 ยอดเงินคงเหลือล่าสุด: ${targetUser.balance} บาท` 
                                 };
                             }
                         }
