@@ -146,10 +146,10 @@ app.post('/callback', async (req, res) => {
                                 
                                 let displayName = user.name !== "ผู้เล่นทั่วไป" ? ` (@${user.name})` : "";
                                 
-                                // ✨ ใช้ข้อความธรรมดาพร้อมลิงก์ที่ใช้งานได้ทันที (เปลี่ยน ID บอทให้แล้ว)
+                                // ✨ เปลี่ยนรูปแบบลิงก์เป็น oaMessage เพื่อบังคับเด้งเข้าหน้าแชทส่วนตัวโดยตรง ไม่ผ่านหน้าโปรไฟล์
                                 replyMessageObject = {
                                     type: 'text',
-                                    text: `🔔 [คำขอถอนเงินใหม่]\n👤 ${user.memberTitle}${displayName}\n💰 จำนวนเงิน: ${amount} บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📌 แอดมินกดลิงก์ด้านล่างเพื่อเข้าแชทส่วนตัวไปดูเลขบัญชีได้เลยครับ:\n👉 https://line.me/R/ti/p/@016vstvh`
+                                    text: `🔔 [คำขอถอนเงินใหม่]\n👤 ${user.memberTitle}${displayName}\n💰 จำนวนเงิน: ${amount} บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📌 แอดมินกดลิงก์ด้านล่างเพื่อเข้าแชทส่วนตัวไปดูเลขบัญชีได้เลยครับ:\n👉 https://line.me/R/oaMessage/@016vstvh/`
                                 };
                             }
                         }
