@@ -13,7 +13,7 @@ let pendingResults = null;
 
 // 👑 [ตั้งค่าแอดมิน] ใส่ LINE USER ID ของแอดมินตรงนี้ครับ
 const ADMIN_LIST = [
-    "ใส่_LINE_USER_ID_แอดมินคนแรกตรงนี้"
+    "U0d1e353091d90af57b37ff38d36e29bc"
 ]; 
 
 function parseCard(cardStr) {
