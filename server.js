@@ -7,14 +7,13 @@ let usersWallets = {};
 let nextMemberId = 1;  
 let isRoundOpen = false;
 let roundBets = {}; 
-let withdrawQueue = []; 
 
 // ตัวแปรระบบสำหรับพักข้อมูลผลไพ่เพื่อรอแอดมินคอนเฟิร์ม
 let pendingResults = null; 
 
 // 👑 [ตั้งค่าแอดมิน] ใส่ LINE USER ID ของแอดมินตรงนี้ครับ
 const ADMIN_LIST = [
-    "U0d1e353091d90af57b37ff38d36e29bc"
+    "ใส่_LINE_USER_ID_แอดมินคนแรกตรงนี้"
 ]; 
 
 function parseCard(cardStr) {
@@ -48,9 +47,7 @@ app.post('/callback', async (req, res) => {
             const originalMsg = event.message.text.trim();
             const userMsg = originalMsg.toLowerCase().replace(/\s+/g, '');
             
-            // เตรียมก้อนข้อความสำหรับใช้ส่งกลับ LINE API
             let replyMessageObject = null; 
-
             const isAdmin = ADMIN_LIST.includes(userId);
 
             // 🧽 [คำสั่งแอดมิน] ล้างระบบ
@@ -58,7 +55,7 @@ app.post('/callback', async (req, res) => {
                 if (!isAdmin) {
                     replyMessageObject = { type: 'text', text: "❌ คุณไม่ใช่แอดมิน ไม่มีสิทธิ์ใช้คำสั่งนี้ครับ" };
                 } else {
-                    usersWallets = {}; nextMemberId = 1; isRoundOpen = false; roundBets = {}; withdrawQueue = []; pendingResults = null;
+                    usersWallets = {}; nextMemberId = 1; isRoundOpen = false; roundBets = {}; pendingResults = null;
                     replyMessageObject = { type: 'text', text: "👑 [แอดมิน] ♻️ ล้างระบบสมาชิกเริ่มต้นใหม่เรียบร้อยแล้วครับ!" };
                 }
             }
@@ -70,15 +67,15 @@ app.post('/callback', async (req, res) => {
                         memberNumber: nextMemberId,
                         memberTitle: `สมาชิกที่ ${nextMemberId}`,
                         name: "ผู้เล่นทั่วไป", 
-                        balance: 0 
+                        balance: 0,
+                        isLockWithdraw: false, // สถานะล็อกกระเป๋า (ป้องกันแทง/ถอนซ้ำระหว่างรอแอดมินโอน)
+                        pendingWithdrawAmount: 0 // ยอดเงินที่แจ้งถอนค้างไว้
                     };
                     nextMemberId++;
                 }
                 
                 const user = usersWallets[userId];
                 const mentionText = `👤 ${user.memberTitle} `;
-                const getQueueIndex = (uid) => withdrawQueue.findIndex(item => item.userId === uid) + 1;
-                const hasPendingWithdraw = getQueueIndex(userId) > 0;
 
                 // ตรวจสอบและดึงชื่อเล่นจาก Profile ชั่วคราวถ้ามีคนแท็กเรียก
                 if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
@@ -91,7 +88,7 @@ app.post('/callback', async (req, res) => {
                 }
 
                 // ==========================================
-                // PART 1: ระบบเติมเงิน / ถอนเงิน (แจ้งแท็กตามวิธีที่ 1) / เช็กยอดกระเป๋า
+                // PART 1: ระบบเติมเงิน / ถอนเงิน / เช็กยอดกระเป๋า
                 // ==========================================
                 if (originalMsg.startsWith('เติม')) {
                     if (!isAdmin) {
@@ -133,23 +130,24 @@ app.post('/callback', async (req, res) => {
                     }
                 }
                 else if (userMsg.startsWith('ถอน')) {
-                    const qPos = getQueueIndex(userId);
-                    if (qPos > 0) {
-                        replyMessageObject = { type: 'text', text: `${mentionText} ⚠️ รายการถอนเงินจำนวน ${withdrawQueue[qPos-1].amount} บาทของคุณ อยู่ระหว่างดำเนินการ (คิวที่ ${qPos})` };
+                    // 🛡️ ดักจับ: ถ้าติดล็อกถอนเงินค้างอยู่ ไม่ให้ทำรายการซ้ำ
+                    if (user.isLockWithdraw) {
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถแจ้งถอนซ้ำได้! รายการถอนเดิมจำนวน ${user.pendingWithdrawAmount} บาท อยู่ระหว่างรอแอดมินโอนและปลดล็อกครับ` };
                     } else {
                         const amount = parseInt(userMsg.replace('ถอน', ''));
                         if (!isNaN(amount) && amount > 0) {
                             if (user.balance < amount) {
-                                replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินไม่พอ (มีอยู่ ${user.balance} บ.)` };
+                                replyMessageObject = { type: 'text', text: `${mentionText} ❌ ไม่สามารถแจ้งถอนได้ ยอดเงินในระบบของคุณไม่พอ (มีอยู่ ${user.balance} บ.)` };
                             } else {
-                                withdrawQueue.push({ userId: userId, amount: amount });
+                                // 🔒 ทำการล็อกกระเป๋าผู้เล่น และบันทึกยอดชั่วคราว
+                                user.isLockWithdraw = true;
+                                user.pendingWithdrawAmount = amount;
                                 
                                 let displayName = user.name !== "ผู้เล่นทั่วไป" ? ` (@${user.name})` : "";
                                 
-                                // ✨ เปลี่ยนรูปแบบลิงก์เป็น oaMessage เพื่อบังคับเด้งเข้าหน้าแชทส่วนตัวโดยตรง ไม่ผ่านหน้าโปรไฟล์
                                 replyMessageObject = {
                                     type: 'text',
-                                    text: `🔔 [คำขอถอนเงินใหม่]\n👤 ${user.memberTitle}${displayName}\n💰 จำนวนเงิน: ${amount} บาท\n⏳ คิวที่: ${withdrawQueue.length}\n\n📌 แอดมินกดลิงก์ด้านล่างเพื่อเข้าแชทส่วนตัวไปดูเลขบัญชีได้เลยครับ:\n👉 https://line.me/R/oaMessage/@016vstvh/`
+                                    text: `🔔 [ระบบรับเรื่องแจ้งถอน]\n👤 ${user.memberTitle}${displayName}\n💰 ยอดที่ต้องการถอน: **${amount}** บาท\n🔒 *สถานะกระเป๋า: ล็อกชั่วคราว (ห้ามแทง/ห้ามถอนซ้ำ)*\n\n📥 **ขั้นตอนสำคัญ:**\nกรุณากดลิงก์ด้านล่างเพื่อส่งเลขบัญชีและแจ้งยอดให้กับแอดมินทางแชทส่วนตัวเพื่อรับยอดเงินโอนครับ\n👉 https://lin.ee/Y2WRLpe`
                                 };
                             }
                         }
@@ -163,23 +161,38 @@ app.post('/callback', async (req, res) => {
                         if (event.message.mention && event.message.mention.mentions && event.message.mention.mentions.length > 0) {
                             targetUserId = event.message.mention.mentions[0].userId;
                         }
-                        let foundIndex = targetUserId ? withdrawQueue.findIndex(item => item.userId === targetUserId) : -1;
-                        if (foundIndex === -1) {
-                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ ไม่พบรายการแจ้งถอนค้าง หรือลืมกดแท็กชื่อผู้เล่น` };
+
+                        const moneyMatch = originalMsg.match(/\d+$/);
+                        let amount = moneyMatch ? parseInt(moneyMatch[0]) : 0;
+
+                        if (!targetUserId) {
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ อนุมัติไม่สำเร็จ: ลืมกดแท็ก @ชื่อผู้เล่น หรือผู้เล่นยังไม่มีชื่อในระบบกลุ่ม` };
+                        } else if (amount <= 0 || isNaN(amount)) {
+                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ❌ อนุมัติไม่สำเร็จ: กรุณาระบุจำนวนเงินท้ายคำสั่งด้วยครับ (เช่น Y @ชื่อผู้เล่น 1000)` };
                         } else {
-                            const targetItem = withdrawQueue[foundIndex];
-                            const targetUser = usersWallets[targetItem.userId];
-                            targetUser.balance -= targetItem.amount;
-                            withdrawQueue.splice(foundIndex, 1);
-                            replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ✅ อนุมัติการถอนเงินเรียบร้อย!\n👤 ${targetUser.memberTitle} ถอนเงินสำเร็จ -${targetItem.amount} บาท` };
+                            const targetUser = usersWallets[targetUserId];
+                            
+                            if (targetUser.balance < amount) {
+                                replyMessageObject = { type: 'text', text: `👑 [แอดมิน] ⚠️ เตือน: เงินในระบบของ สมาชิกที่ ${targetUser.memberNumber} มีไม่พอตัดยอด (มีอยู่ ${targetUser.balance} บ. แต่จะตัดออก ${amount} บ.)` };
+                            } else {
+                                // 💸 หักเงินจริง + 🔓 ปลดล็อกกระเป๋าให้กลับมาเล่นรอบต่อไปได้
+                                targetUser.balance -= amount;
+                                targetUser.isLockWithdraw = false;
+                                targetUser.pendingWithdrawAmount = 0;
+                                
+                                let nameDisplay = targetUser.name !== "ผู้เล่นทั่วไป" ? ` (@${targetUser.name})` : "";
+                                replyMessageObject = { 
+                                    type: 'text', 
+                                    text: `👑 [แอดมิน] ✅ อนุมัติการถอนเงินและตัดยอดในระบบเรียบร้อย!\n👤 ${targetUser.memberTitle}${nameDisplay}\n📉 หักเงินสำเร็จ: -${amount} บาท\n🔓 ปลดล็อกกระเป๋าเรียบร้อย\n💰 ยอดเงินคงเหลือในบอทล่าสุด: ${targetUser.balance} บาท` 
+                                };
+                            }
                         }
                     }
                 }
                 else if (userMsg === 'c') {
-                    const qPos = getQueueIndex(userId);
                     let nameDisplay = user.name !== "ผู้เล่นทั่วไป" ? `(@${user.name})` : "";
-                    if (qPos > 0) {
-                        replyMessageObject = { type: 'text', text: `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n⚠️ (มีรายการแจ้งถอนค้างอยู่ ${withdrawQueue[qPos-1].amount} บาท ในคิวที่ ${qPos})` };
+                    if (user.isLockWithdraw) {
+                        replyMessageObject = { type: 'text', text: `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท\n🔒 (⚠️ ติดล็อกถอนเงินค้างอยู่ ${user.pendingWithdrawAmount} บาท ระหว่างรอแอดมินโอน)` };
                     } else {
                         replyMessageObject = { type: 'text', text: `👤 ${user.memberTitle} ${nameDisplay}\n💰 ยอดเงินคงเหลือของคุณ: ${user.balance} บาท` };
                     }
@@ -217,8 +230,8 @@ app.post('/callback', async (req, res) => {
                     }
                 }
                 else if (userMsg === 'r') {
-                    if (hasPendingWithdraw) {
-                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณมีรายการแจ้งถอนเงินตกค้างอยู่ ไม่สามารถทำรายการได้` };
+                    if (user.isLockWithdraw) {
+                        replyMessageObject = { type: 'text', text: `${mentionText} ❌ คุณมีรายการแจ้งถอนเงินตกค้างอยู่กระเป๋าโดนล็อก ไม่สามารถทำรายการได้` };
                     } else if (!isRoundOpen) {
                         replyMessageObject = { type: 'text', text: `${mentionText} ❌ ระบบปิดรอบไปแล้ว ไม่สามารถยกเลิกโพยได้ครับ` };
                     } else if (!roundBets[userId]) {
@@ -247,8 +260,9 @@ app.post('/callback', async (req, res) => {
                     }
 
                     if (isBetMessage) {
-                        if (hasPendingWithdraw) {
-                            replyMessageObject = { type: 'text', text: `${mentionText} ❌ **ไม่สามารถลงโพยได้!** มีรายการแจ้งถอนค้างอยู่` };
+                        // 🛡️ ดักจับ: ถ้าติดล็อกถอนเงินค้างอยู่ ห้ามส่งโพยแทงเด็ดขาด
+                        if (user.isLockWithdraw) {
+                            replyMessageObject = { type: 'text', text: `${mentionText} ❌ **ไม่สามารถลงโพยได้!** กระเป๋าเงินของคุณถูกล็อกชั่วคราวเนื่องจากรอดำเนินการถอนเงินจำนวน ${user.pendingWithdrawAmount} บาทอยู่ครับ` };
                         } else if (!isRoundOpen) {
                             replyMessageObject = { type: 'text', text: `${mentionText} ❌ ยังไม่เปิดรอบ หรือระบบปิดรับเดิมพันไปแล้วครับ!` };
                         } else {
